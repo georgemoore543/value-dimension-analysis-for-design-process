@@ -1,0 +1,646 @@
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.decomposition import LatentDirichletAllocation
+import dash
+from dash import dcc, html, Input, Output, State
+import openpyxl
+from typing import List, Dict, Tuple
+import warnings
+from sklearn.impute import SimpleImputer
+
+class ValueDimensionPCA:
+    def __init__(self):
+        self.ratings_data = None
+        self.value_dims = None
+        self.normalized_data = None
+        self.cosine_sim_matrix = None
+        self.pca_ratings = None
+        self.pca_similarity = None
+        self.explained_variance_ratio = None
+        self.component_loadings = None
+        self.original_dims = None
+        
+    def validate_spreadsheet(self, df: pd.DataFrame, expected_cols: List[str]) -> bool:
+        """
+        Validate if spreadsheet follows expected format
+        """
+        missing_cols = [col for col in expected_cols if col not in df.columns]
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {missing_cols}")
+        return True
+
+    def check_missing_values(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
+        """
+        Check for missing values and handle them based on user input
+        """
+        missing_info = {
+            'rows_with_missing': df.isnull().any(axis=1).sum(),
+            'cols_with_missing': df.isnull().any(axis=0).sum()
+        }
+        
+        if missing_info['rows_with_missing'] > 0 or missing_info['cols_with_missing'] > 0:
+            print(f"Missing values detected:")
+            print(f"Rows with missing values: {missing_info['rows_with_missing']}")
+            print(f"Columns with missing values: {missing_info['cols_with_missing']}")
+            
+            handling_method = input(
+                "How would you like to handle missing values?\n"
+                "a) Remove rows with missing values\n"
+                "b) Remove columns with missing values\n"
+                "c) Impute missing values\n"
+                "Please enter a, b, or c: "
+            )
+            
+            if handling_method == 'a':
+                df = df.dropna(axis=0)
+            elif handling_method == 'b':
+                df = df.dropna(axis=1)
+            elif handling_method == 'c':
+                imputer = SimpleImputer(strategy='mean')
+                df = pd.DataFrame(
+                    imputer.fit_transform(df),
+                    columns=df.columns,
+                    index=df.index
+                )
+                
+        return df, missing_info
+
+    def load_data(self, ratings_paths: List[str], dims_paths: List[str]):
+        """
+        Load and combine multiple Excel files
+        """
+        combined_ratings = []
+        combined_dims = []
+        
+        for r_path, d_path in zip(ratings_paths, dims_paths):
+            # Load ratings data
+            ratings_df = pd.read_excel(r_path)
+            dims_df = pd.read_excel(d_path)
+            
+            # Validate format
+            self.validate_spreadsheet(ratings_df, ['prompt'])  # Add expected columns
+            self.validate_spreadsheet(dims_df, ['value_dimension', 'dim_definitions'])
+            
+            # Check for missing values
+            ratings_df, missing_info = self.check_missing_values(ratings_df)
+            
+            combined_ratings.append(ratings_df)
+            combined_dims.append(dims_df)
+        
+        self.ratings_data = pd.concat(combined_ratings, axis=1)
+        self.value_dims = pd.concat(combined_dims, axis=0)
+        self.original_dims = self.ratings_data.columns.tolist()
+
+    def normalize_data(self):
+        """
+        Normalize ratings from different scales
+        """
+        scaler = StandardScaler()
+        self.normalized_data = pd.DataFrame(
+            scaler.fit_transform(self.ratings_data),
+            columns=self.ratings_data.columns,
+            index=self.ratings_data.index
+        )
+
+    def calculate_cosine_similarity(self):
+        """
+        Generate cosine similarity scores between prompts and value dimensions
+        """
+        # Combine value dimension names and definitions
+        dim_texts = []
+        for _, row in self.value_dims.iterrows():
+            text = row['value_dimension']
+            if pd.notna(row.get('dim_definitions')):
+                text += ' ' + row['dim_definitions']
+            dim_texts.append(text)
+            
+        # Calculate cosine similarity
+        self.cosine_sim_matrix = cosine_similarity(
+            self.normalized_data,
+            pd.DataFrame(dim_texts).values
+        )
+
+    def perform_pca(self, n_components=None):
+        """
+        Conduct PCA on both ratings and similarity data
+        """
+        # PCA on ratings data
+        self.pca_ratings = PCA(n_components=n_components)
+        ratings_transformed = self.pca_ratings.fit_transform(self.normalized_data)
+        
+        # PCA on similarity data
+        self.pca_similarity = PCA(n_components=n_components)
+        similarity_transformed = self.pca_similarity.fit_transform(self.cosine_sim_matrix)
+        
+        # Store explained variance ratios
+        self.explained_variance_ratio = {
+            'ratings': self.pca_ratings.explained_variance_ratio_,
+            'similarity': self.pca_similarity.explained_variance_ratio_
+        }
+        
+        # Store component loadings
+        self.component_loadings = {
+            'ratings': pd.DataFrame(
+                self.pca_ratings.components_,
+                columns=self.normalized_data.columns
+            ),
+            'similarity': pd.DataFrame(
+                self.pca_similarity.components_,
+                columns=self.value_dims['value_dimension']
+            )
+        }
+        
+        return ratings_transformed, similarity_transformed
+
+    def create_scree_plot(self):
+        """
+        Create scree plot showing explained variance ratios
+        """
+        fig = go.Figure()
+        
+        # Add traces for both PCA analyses
+        for pca_type in ['ratings', 'similarity']:
+            var_ratio = self.explained_variance_ratio[pca_type]
+            cum_var_ratio = np.cumsum(var_ratio)
+            
+            fig.add_trace(go.Scatter(
+                x=list(range(1, len(var_ratio) + 1)),
+                y=var_ratio,
+                name=f'{pca_type.capitalize()} Explained Variance',
+                mode='lines+markers'
+            ))
+            
+            fig.add_trace(go.Scatter(
+                x=list(range(1, len(var_ratio) + 1)),
+                y=cum_var_ratio,
+                name=f'{pca_type.capitalize()} Cumulative Variance',
+                mode='lines+markers',
+                line=dict(dash='dash')
+            ))
+            
+        fig.update_layout(
+            title='Scree Plot',
+            xaxis_title='Principal Component',
+            yaxis_title='Explained Variance Ratio',
+            showlegend=True
+        )
+        
+        return fig
+
+    def create_lda_heatmap(self, data, n_topics=5):
+        """
+        Create LDA-based clustering heatmap
+        """
+        max_topics = int(len(self.ratings_data) * 0.25)
+        n_topics = min(max(1, n_topics), max_topics)
+        
+        lda = LatentDirichletAllocation(
+            n_components=n_topics,
+            random_state=42
+        )
+        
+        lda_output = lda.fit_transform(data)
+        
+        fig = go.Figure(data=go.Heatmap(
+            z=lda_output,
+            x=[f'Topic {i+1}' for i in range(n_topics)],
+            y=self.ratings_data.index,
+            colorscale='Viridis'
+        ))
+        
+        fig.update_layout(
+            title='LDA Topic Distribution Heatmap',
+            xaxis_title='Topics',
+            yaxis_title='Prompts'
+        )
+        
+        return fig
+
+    def create_3d_scatter(self, data, labels, title, prompts=None, color=None):
+        """
+        Enhanced 3D scatter plot with hover info and animation capabilities
+        """
+        fig = go.Figure(data=[go.Scatter3d(
+            x=data[:, 0],
+            y=data[:, 1],
+            z=data[:, 2],
+            mode='markers',
+            text=prompts if prompts is not None else labels,
+            hovertemplate="<b>Prompt:</b> %{text}<br>" +
+                         "<b>PC1:</b> %{x:.2f}<br>" +
+                         "<b>PC2:</b> %{y:.2f}<br>" +
+                         "<b>PC3:</b> %{z:.2f}<br>" +
+                         "<extra></extra>",
+            marker=dict(
+                size=8,
+                color=color if color else data[:, 0],
+                colorscale='Viridis',
+                opacity=0.8
+            )
+        )])
+        
+        fig.update_layout(
+            title=title,
+            scene=dict(
+                xaxis=dict(
+                    title='PC1',
+                    rangeslider=dict(visible=True)
+                ),
+                yaxis=dict(
+                    title='PC2',
+                    rangeslider=dict(visible=True)
+                ),
+                zaxis=dict(
+                    title='PC3',
+                    rangeslider=dict(visible=True)
+                ),
+            ),
+            updatemenus=[
+                dict(
+                    type='buttons',
+                    showactive=False,
+                    buttons=[
+                        dict(
+                            label='Play',
+                            method='animate',
+                            args=[None, {'frame': {'duration': 500, 'redraw': True},
+                                       'fromcurrent': True,
+                                       'transition': {'duration': 300,
+                                                    'easing': 'quadratic-in-out'}}]
+                        ),
+                        dict(
+                            label='Pause',
+                            method='animate',
+                            args=[[None], {'frame': {'duration': 0, 'redraw': False},
+                                         'mode': 'immediate',
+                                         'transition': {'duration': 0}}]
+                        )
+                    ]
+                )
+            ]
+        )
+        
+        # Add animation frames
+        frames = [
+            go.Frame(
+                data=[go.Scatter3d(
+                    x=data[:, 0] * np.cos(theta) - data[:, 1] * np.sin(theta),
+                    y=data[:, 0] * np.sin(theta) + data[:, 1] * np.cos(theta),
+                    z=data[:, 2]
+                )],
+                name=f'frame{i}'
+            )
+            for i, theta in enumerate(np.linspace(0, 2*np.pi, 30))
+        ]
+        fig.frames = frames
+        
+        return fig
+
+    def create_scatter_matrix(self, data, labels, title):
+        """
+        Create scatter plot matrix for pairwise comparisons
+        """
+        fig = px.scatter_matrix(
+            pd.DataFrame(data, columns=labels),
+            dimensions=labels,
+            title=title,
+            color=data[:, 0],  # Color by first component
+            labels={col: col for col in labels}
+        )
+        
+        fig.update_traces(diagonal_visible=False)
+        return fig
+
+    def create_visualizations(self):
+        """
+        Create interactive Plotly visualizations
+        """
+        # Implementation here
+        
+    def export_results(self, output_path):
+        """
+        Export PCA results and generate report
+        """
+        with pd.ExcelWriter(output_path) as writer:
+            # Export PCA results
+            pd.DataFrame(
+                self.pca_ratings.components_,
+                columns=self.normalized_data.columns,
+                index=[f'PC{i+1}' for i in range(len(self.pca_ratings.components_))]
+            ).to_excel(writer, sheet_name='Ratings_PCA_Components')
+            
+            pd.DataFrame(
+                self.pca_similarity.components_,
+                columns=self.value_dims['value_dimension'],
+                index=[f'PC{i+1}' for i in range(len(self.pca_similarity.components_))]
+            ).to_excel(writer, sheet_name='Similarity_PCA_Components')
+            
+            # Export explained variance
+            pd.DataFrame({
+                'Ratings_Explained_Variance': self.explained_variance_ratio['ratings'],
+                'Ratings_Cumulative_Variance': np.cumsum(self.explained_variance_ratio['ratings']),
+                'Similarity_Explained_Variance': self.explained_variance_ratio['similarity'],
+                'Similarity_Cumulative_Variance': np.cumsum(self.explained_variance_ratio['similarity'])
+            }).to_excel(writer, sheet_name='Explained_Variance')
+
+    def save_visualization(self, fig, filename, spreadsheet_names):
+        """
+        Save visualization with formatted filename
+        """
+        # Create abbreviated spreadsheet names
+        abbrev_names = '_'.join([name.split('.')[0][:3] for name in spreadsheet_names])
+        
+        # Determine visualization type
+        if isinstance(fig, go.Figure):
+            if any(trace.type == 'scatter3d' for trace in fig.data):
+                viz_type = '3d'
+            elif any(trace.type == 'heatmap' for trace in fig.data):
+                viz_type = 'hmap'
+            else:
+                viz_type = 'scat'
+        
+        # Format filename
+        formatted_filename = f"{abbrev_names}_{viz_type}_{filename}.png"
+        
+        # Save figure
+        fig.write_image(formatted_filename)
+        return formatted_filename
+
+# Dashboard class for interactive visualization
+class PCADashboard:
+    def __init__(self, pca_analysis):
+        self.app = dash.Dash(__name__)
+        self.pca_analysis = pca_analysis
+        self.setup_layout()
+        self.setup_callbacks()
+        
+    def setup_layout(self):
+        """
+        Enhanced dashboard layout with new features
+        """
+        self.app.layout = html.Div([
+            html.H1("PCA Analysis Dashboard"),
+            
+            # Layout controls
+            html.Div([
+                html.Button("Save Current Visualization", id='save-viz-button'),
+                html.Div([
+                    html.Label("Color Scheme:"),
+                    dcc.Input(
+                        id='color-input',
+                        type='text',
+                        placeholder='Enter hex color (e.g., #FF0000)',
+                        value='#1f77b4'
+                    ),
+                ]),
+                html.Div([
+                    html.Label("Layout Style:"),
+                    dcc.Dropdown(
+                        id='layout-style',
+                        options=[
+                            {'label': '2x2 Grid', 'value': 'grid'},
+                            {'label': 'Horizontal Stack', 'value': 'horizontal'},
+                            {'label': 'Vertical Stack', 'value': 'vertical'}
+                        ],
+                        value='grid'
+                    )
+                ]),
+            ]),
+            
+            # Visualization type selector for each quadrant
+            html.Div([
+                html.Div([
+                    html.Label("Quadrant 1 Visualization:"),
+                    dcc.Dropdown(
+                        id='q1-viz-type',
+                        options=[
+                            {'label': '3D Plot', 'value': '3d'},
+                            {'label': 'Heatmap', 'value': 'heatmap'}
+                        ],
+                        value='3d'
+                    ),
+                ], style={'width': '25%', 'display': 'inline-block'}),
+                # Repeat for other quadrants...
+            ]),
+            
+            # Dataset filter
+            html.Div([
+                html.Label("Select Dataset:"),
+                dcc.Dropdown(
+                    id='dataset-filter',
+                    options=[{'label': i, 'value': i} for i in self.pca_analysis.original_dims],
+                    multi=True
+                )
+            ]),
+            
+            # LDA topics slider
+            html.Div([
+                html.Label("Number of LDA Topics:"),
+                dcc.Slider(
+                    id='lda-topics-slider',
+                    min=1,
+                    max=int(len(self.pca_analysis.ratings_data) * 0.25),
+                    value=5,
+                    marks={i: str(i) for i in range(1, int(len(self.pca_analysis.ratings_data) * 0.25), 5)},
+                    step=1
+                )
+            ]),
+            
+            # Visualization mode toggle
+            html.Div([
+                html.Label("Visualization Mode:"),
+                dcc.RadioItems(
+                    id='viz-mode',
+                    options=[
+                        {'label': 'Principal Components', 'value': 'pc'},
+                        {'label': 'Original Dimensions', 'value': 'original'}
+                    ],
+                    value='pc'
+                )
+            ]),
+            
+            # Quadrant display
+            html.Div([
+                html.Div([
+                    dcc.Graph(id='quadrant1')
+                ], style={'width': '50%', 'display': 'inline-block'}),
+                html.Div([
+                    dcc.Graph(id='quadrant2')
+                ], style={'width': '50%', 'display': 'inline-block'}),
+            ]),
+            html.Div([
+                html.Div([
+                    dcc.Graph(id='quadrant3')
+                ], style={'width': '50%', 'display': 'inline-block'}),
+                html.Div([
+                    dcc.Graph(id='quadrant4')
+                ], style={'width': '50%', 'display': 'inline-block'}),
+            ]),
+            
+            # Add scatter matrix toggle
+            html.Div([
+                html.Label("Show Scatter Matrix:"),
+                dcc.RadioItems(
+                    id='show-scatter-matrix',
+                    options=[
+                        {'label': 'Yes', 'value': 'yes'},
+                        {'label': 'No', 'value': 'no'}
+                    ],
+                    value='no'
+                )
+            ]),
+            
+            # Scatter matrix container
+            html.Div(id='scatter-matrix-container', style={'display': 'none'}),
+            
+            # Add axis range controls
+            html.Div([
+                html.Div([
+                    html.Label("PC1 Range:"),
+                    dcc.RangeSlider(
+                        id='pc1-range',
+                        min=-10,
+                        max=10,
+                        step=0.1,
+                        value=[-5, 5],
+                        marks={i: str(i) for i in range(-10, 11, 2)}
+                    )
+                ]),
+                html.Div([
+                    html.Label("PC2 Range:"),
+                    dcc.RangeSlider(
+                        id='pc2-range',
+                        min=-10,
+                        max=10,
+                        step=0.1,
+                        value=[-5, 5],
+                        marks={i: str(i) for i in range(-10, 11, 2)}
+                    )
+                ]),
+                html.Div([
+                    html.Label("PC3 Range:"),
+                    dcc.RangeSlider(
+                        id='pc3-range',
+                        min=-10,
+                        max=10,
+                        step=0.1,
+                        value=[-5, 5],
+                        marks={i: str(i) for i in range(-10, 11, 2)}
+                    )
+                ])
+            ])
+        ])
+    def setup_callbacks(self):
+        """
+        Enhanced callbacks with new features
+        """
+        @self.app.callback(
+            [Output('quadrant1', 'figure'),
+             Output('quadrant2', 'figure'),
+             Output('quadrant3', 'figure'),
+             Output('quadrant4', 'figure'),
+             Output('scatter-matrix-container', 'children'),
+             Output('scatter-matrix-container', 'style')],
+            [Input('q1-viz-type', 'value'),
+             Input('dataset-filter', 'value'),
+             Input('lda-topics-slider', 'value'),
+             Input('viz-mode', 'value'),
+             Input('color-input', 'value'),
+             Input('layout-style', 'value'),
+             Input('show-scatter-matrix', 'value'),
+             Input('pc1-range', 'value'),
+             Input('pc2-range', 'value'),
+             Input('pc3-range', 'value')]
+        )
+        def update_visualizations(viz_type, selected_datasets, n_topics,
+                                viz_mode, color, layout_style, show_matrix,
+                                pc1_range, pc2_range, pc3_range):
+            # Filter data based on selected datasets
+            filtered_data = self.pca_analysis.normalized_data
+            if selected_datasets:
+                filtered_data = filtered_data[selected_datasets]
+            
+            # Create visualizations based on type
+            figures = []
+            for i in range(4):
+                if viz_type == '3d':
+                    fig = self.pca_analysis.create_3d_scatter(
+                        data=filtered_data.values,
+                        labels=filtered_data.columns,
+                        title=f'Quadrant {i+1}'
+                    )
+                    # Update color scheme
+                    fig.update_traces(marker=dict(color=color))
+                else:
+                    fig = self.pca_analysis.create_lda_heatmap(
+                        data=filtered_data,
+                        n_topics=n_topics
+                    )
+                figures.append(fig)
+            
+            # Create scatter matrix if requested
+            scatter_matrix = None
+            matrix_style = {'display': 'none'}
+            if show_matrix == 'yes':
+                scatter_matrix = self.pca_analysis.create_scatter_matrix(
+                    data=filtered_data.values,
+                    labels=filtered_data.columns,
+                    title='Dimension Pairwise Comparisons'
+                )
+                matrix_style = {'display': 'block'}
+            
+            # Update layout based on style
+            if layout_style != 'grid':
+                for fig in figures:
+                    fig.update_layout(height=300 if layout_style == 'horizontal' else 600)
+            
+            # Update axis ranges for 3D plots
+            if viz_type == '3d':
+                for fig in figures:
+                    fig.update_layout(
+                        scene=dict(
+                            xaxis_range=pc1_range,
+                            yaxis_range=pc2_range,
+                            zaxis_range=pc3_range
+                        )
+                    )
+            
+            return figures + [scatter_matrix, matrix_style]
+
+        @self.app.callback(
+            Output('download-dataframe', 'data'),
+            Input('save-viz-button', 'n_clicks'),
+            State('q1-viz-type', 'value'),  # Add states for current visualization state
+            prevent_initial_call=True
+        )
+        def save_visualization(n_clicks, viz_type):
+            if n_clicks:
+                # Get current figures
+                figures = [
+                    self.app.get_asset_url(f'quadrant{i+1}')
+                    for i in range(4)
+                ]
+                
+                # Save each figure
+                filenames = []
+                for i, fig in enumerate(figures):
+                    filename = self.pca_analysis.save_visualization(
+                        fig,
+                        f'quadrant{i+1}',
+                        self.pca_analysis.spreadsheet_names  # Add this attribute to store loaded spreadsheet names
+                    )
+                    filenames.append(filename)
+                
+                return filenames
+
+    def run_server(self):
+        """
+        Run the Dash server
+        """
+        self.app.run_server(debug=True)
