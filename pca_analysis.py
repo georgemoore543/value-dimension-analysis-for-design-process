@@ -1,7 +1,5 @@
-from pca_analysis import ValueDimensionPCA
+from pca_analysis import ValueDimensionPCAGui
 
-# Create instance
-pca = ValueDimensionPCA()
-
-# Start the initialization process
-pca.initialize_data()
+if __name__ == "__main__":
+    gui = ValueDimensionPCAGui()
+    gui.run()
