@@ -1,78 +1,320 @@
+print("=" * 50)
+print("LOADING PCA_VALUE_DIM.PY")
+print("File path:", __file__)
+print("Module name:", __name__)
+print("=" * 50)
+
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
-import os
-from typing import List, Tuple
-import plotly.graph_objects as go
 import numpy as np
-from dash import html, dcc, Input, Output, State
-from sklearn.impute import SimpleImputer
-import io
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+import logging
+import os
+import sys
+from typing import List, Tuple
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+import matplotlib.pyplot as plt
+from scipy.stats import chi2
 
+print("File loaded, ValueDimensionPCA will be defined at:", __name__)
+
+print("Defining ValueDimensionPCA class...")
+class ValueDimensionPCA:
+    def __init__(self):
+        print("ValueDimensionPCA initialized")
+        self.ratings_data = None
+        self.value_dims = None
+        self.pca_ratings = None
+        self.original_dims = None
+        self.pca = None
+        self.explained_variance_ratio_ = None
+        self.components_ = None
+        self.prompts = None
+        
+    def validate_data(self, ratings_dfs: List[pd.DataFrame], dims_dfs: List[pd.DataFrame]) -> Tuple[bool, str]:
+        """Validate the loaded data"""
+        try:
+            # First, handle non-numeric columns in ratings data
+            print("\nChecking ratings data format...")
+            for i in range(len(ratings_dfs)):
+                df = ratings_dfs[i]
+                non_numeric_cols = df.select_dtypes(exclude=['int64', 'float64']).columns
+                if not non_numeric_cols.empty:
+                    print(f"\nRatings file {i+1} contains non-numeric columns:")
+                    print("\n".join([f"- {col}" for col in non_numeric_cols]))
+                    print("These columns will be removed before PCA analysis.")
+                    
+                    # Store non-numeric data if needed (you can add this functionality later)
+                    # self.store_metadata(df[non_numeric_cols])
+                    
+                    # Remove non-numeric columns
+                    ratings_dfs[i] = df.select_dtypes(include=['int64', 'float64'])
+                    print(f"Shape after removing non-numeric columns: {ratings_dfs[i].shape}")
+            
+            # Continue with rest of validation...
+            missing_info = []
+            
+            # Check ratings files for missing values
+            print("\nChecking ratings files for missing values...")
+            for i, df in enumerate(ratings_dfs):
+                missing = df.isnull().sum()
+                if missing.any():
+                    cols_with_missing = missing[missing > 0]
+                    missing_info.append(f"\nRatings file {i+1}:")
+                    for col, count in cols_with_missing.items():
+                        missing_info.append(f"- Column '{col}': {count} missing values")
+            
+            # Check dimensions files for missing values
+            print("\nChecking dimensions files for missing values...")
+            for i, df in enumerate(dims_dfs):
+                missing = df.isnull().sum()
+                if missing.any():
+                    cols_with_missing = missing[missing > 0]
+                    # If 'dim_definitions' column has missing values
+                    if 'dim_definitions' in cols_with_missing:
+                        response = messagebox.askyesno(
+                            "Missing Dimension Definitions",
+                            f"Dimensions file {i+1} has missing values in the 'dim_definitions' column.\n\n"
+                            "Would you like to proceed without the dimension definitions?"
+                        )
+                        if response:
+                            # Remove dim_definitions column
+                            dims_dfs[i] = df.drop(columns=['dim_definitions'])
+                            print(f"Removed 'dim_definitions' column from dimensions file {i+1}")
+                            # Remove this from cols_with_missing
+                            cols_with_missing = cols_with_missing.drop('dim_definitions')
+                    
+                    # Check if there are still other missing values
+                    if cols_with_missing.any():
+                        missing_info.append(f"\nDimensions file {i+1}:")
+                        for col, count in cols_with_missing.items():
+                            missing_info.append(f"- Column '{col}': {count} missing values")
+            
+            if missing_info:
+                message = "Missing values detected:\n" + "\n".join(missing_info)
+                print(message)
+                
+                # Ask user what to do about remaining missing values
+                response = messagebox.askyesno(
+                    "Missing Values Detected",
+                    f"{message}\n\nWould you like to proceed anyway?\n"
+                    "(Missing values will be handled by removing rows with any missing data)"
+                )
+                
+                if response:
+                    print("User chose to proceed with missing values")
+                    return True, "Proceeding with missing values"
+                else:
+                    print("User chose not to proceed")
+                    return False, "Operation cancelled by user"
+            
+            # Validate required columns ('value dimension' is required)
+            print("\nValidating column names...")
+            required_cols = ['value dimensions']
+            for i, df in enumerate(dims_dfs):
+                print(f"Columns in dimensions file {i+1}:", df.columns.tolist())
+                missing_cols = [col for col in required_cols if col not in df.columns]
+                if missing_cols:
+                    message = f"Dimensions file {i+1} is missing required column: 'value dimensions'"
+                    print(message)
+                    return False, message
+            
+            return True, "Data validation successful"
+            
+        except Exception as e:
+            print(f"Validation error: {str(e)}")
+            return False, f"Validation error: {str(e)}"
+    
+    def load_data(self, ratings_paths: List[str], dims_paths: List[str]):
+        """Load and validate data files"""
+        try:
+            print(f"Attempting to load data from:")
+            print(f"Ratings paths: {ratings_paths}")
+            print(f"Dimensions paths: {dims_paths}")
+            
+            # Load data
+            print("Loading ratings files...")
+            ratings_dfs = []
+            for path in ratings_paths:
+                print(f"Reading {path}")
+                df = pd.read_excel(path)
+                print(f"Original shape: {df.shape}")
+                
+                # Store metadata if needed
+                if 'Prompt' in df.columns:
+                    self.prompts = df['Prompt'].to_dict()
+                
+                ratings_dfs.append(df)
+            
+            print("Loading dimensions files...")
+            dims_dfs = []
+            for path in dims_paths:
+                print(f"Reading {path}")
+                df = pd.read_excel(path)
+                print(f"Shape: {df.shape}")
+                dims_dfs.append(df)
+            
+            # Validate and clean data
+            print("Validating data...")
+            is_valid, message = self.validate_data(ratings_dfs, dims_dfs)
+            if not is_valid:
+                return False, message
+            
+            # Process validated data
+            print("Processing validated data...")
+            self.ratings_data = pd.concat(ratings_dfs, axis=1)
+            self.value_dims = pd.concat(dims_dfs, axis=0)
+            self.original_dims = self.ratings_data.columns.tolist()
+            
+            # Perform PCA
+            print("Performing PCA...")
+            self.perform_pca()
+            return True, "Data loaded successfully"
+            
+        except Exception as e:
+            import traceback
+            print(f"Error loading data: {str(e)}")
+            print("Full traceback:")
+            print(traceback.format_exc())
+            return False, f"Error loading data: {str(e)}"
+    
+    def perform_pca(self):
+        """Perform PCA on the ratings data"""
+        # Standardize the data
+        scaler = StandardScaler()
+        scaled_data = scaler.fit_transform(self.ratings_data)
+        
+        # Perform PCA
+        self.pca = PCA()
+        self.pca_ratings = self.pca.fit_transform(scaled_data)
+        
+        # Store PCA results
+        self.explained_variance_ratio_ = self.pca.explained_variance_ratio_
+        self.components_ = self.pca.components_
+
+    def get_prompt_for_component(self, component_index: int, n_top: int = 5) -> List[Tuple[str, float]]:
+        """Get the top contributing prompts for a given principal component"""
+        loadings = self.components_[component_index]
+        # Get indices of top absolute loadings
+        top_indices = np.abs(loadings).argsort()[-n_top:][::-1]
+        
+        results = []
+        for idx in top_indices:
+            loading = loadings[idx]
+            prompt = self.prompts.get(self.original_dims[idx], "Unknown prompt")
+            results.append((prompt, loading))
+        
+        return results
+
+    def create_loading_plot(self, pc1: int, pc2: int):
+        """Create loading plot with prompt labels"""
+        # Your existing plotting code, but use prompts for labels
+        loadings = self.components_
+        for i, (x, y) in enumerate(zip(loadings[pc1], loadings[pc2])):
+            prompt = self.prompts.get(self.original_dims[i], "Unknown")
+            # Add prompt as label
+            plt.annotate(
+                prompt[:30] + "..." if len(prompt) > 30 else prompt,
+                (x, y),
+                xytext=(5, 5),
+                textcoords='offset points',
+                fontsize=8
+            )
+
+# Then, the GUI class
 class ValueDimensionPCAGui:
+    # Add the PCA class as a class attribute
+    PCA_Class = ValueDimensionPCA
+    
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("PCA Analysis File Selection")
+        self.root.title("PCA Analysis")
         self.root.geometry("800x600")
         
+        # Initialize data structures
         self.ratings_paths = []
         self.dims_paths = []
-        self.ratings_data = []  # Store DataFrames
-        self.dims_data = []     # Store DataFrames
+        self.ratings_count = tk.StringVar(value="1")
+        self.dims_count = tk.StringVar(value="1")
         
-        self.create_widgets()
+        # Create initial widgets
+        self.create_initial_widgets()
         
-    def create_widgets(self):
+    def create_initial_widgets(self):
         # File count frame
         count_frame = ttk.LabelFrame(self.root, text="Number of Files", padding="10")
         count_frame.pack(fill="x", padx=10, pady=5)
         
         # Ratings count
         ttk.Label(count_frame, text="Number of ratings spreadsheets:").grid(row=0, column=0, padx=5, pady=5)
-        self.ratings_count = ttk.Spinbox(count_frame, from_=1, to=10, width=5)
-        self.ratings_count.grid(row=0, column=1, padx=5, pady=5)
+        ratings_spinbox = ttk.Spinbox(
+            count_frame, 
+            from_=1, 
+            to=10, 
+            width=5,
+            textvariable=self.ratings_count
+        )
+        ratings_spinbox.grid(row=0, column=1, padx=5, pady=5)
         
         # Dimensions count
         ttk.Label(count_frame, text="Number of dimension spreadsheets:").grid(row=1, column=0, padx=5, pady=5)
-        self.dims_count = ttk.Spinbox(count_frame, from_=1, to=10, width=5)
-        self.dims_count.grid(row=1, column=1, padx=5, pady=5)
+        dims_spinbox = ttk.Spinbox(
+            count_frame, 
+            from_=1, 
+            to=10, 
+            width=5,
+            textvariable=self.dims_count
+        )
+        dims_spinbox.grid(row=1, column=1, padx=5, pady=5)
         
-        # Button to proceed to file selection
-        ttk.Button(count_frame, text="Set File Count", command=self.setup_file_selection).grid(row=2, column=0, columnspan=2, pady=10)
-        
-        # File selection frames
-        self.files_frame = ttk.Frame(self.root)
-        self.files_frame.pack(fill="both", expand=True, padx=10, pady=5)
-        
-        # Summary text
-        self.summary_text = tk.Text(self.root, height=10, width=80)
-        self.summary_text.pack(padx=10, pady=5)
-        
-        # Proceed button (initially disabled)
-        self.proceed_button = ttk.Button(self.root, text="Proceed with Analysis", command=self.proceed, state="disabled")
-        self.proceed_button.pack(pady=10)
-        
+        # Next button
+        ttk.Button(count_frame, text="Next", command=self.setup_file_selection).grid(row=2, column=0, columnspan=2, pady=10)
+    
     def setup_file_selection(self):
-        # Clear previous file selection widgets
-        for widget in self.files_frame.winfo_children():
+        # Get the values
+        num_ratings = int(self.ratings_count.get())
+        num_dims = int(self.dims_count.get())
+        
+        # Clear initial widgets
+        for widget in self.root.winfo_children():
             widget.destroy()
         
-        self.ratings_paths = []
-        self.dims_paths = []
+        # Initialize the paths lists
+        self.ratings_paths = [None] * num_ratings
+        self.dims_paths = [None] * num_dims
         
-        # Create ratings file selection
-        ratings_frame = ttk.LabelFrame(self.files_frame, text="Ratings Spreadsheets", padding="10")
+        # Create file selection widgets
+        self.create_file_selection_widgets()
+    
+    def create_file_selection_widgets(self):
+        # Create main frame
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.pack(fill="both", expand=True)
+        
+        # Ratings files section
+        ratings_frame = ttk.LabelFrame(main_frame, text="Ratings Spreadsheets", padding="10")
         ratings_frame.pack(fill="x", pady=5)
         
-        for i in range(int(self.ratings_count.get())):
+        for i in range(len(self.ratings_paths)):
             self.create_file_selector(ratings_frame, f"Ratings file {i+1}", "ratings", i)
         
-        # Create dimensions file selection
-        dims_frame = ttk.LabelFrame(self.files_frame, text="Dimensions Spreadsheets", padding="10")
+        # Dimensions files section
+        dims_frame = ttk.LabelFrame(main_frame, text="Dimensions Spreadsheets", padding="10")
         dims_frame.pack(fill="x", pady=5)
         
-        for i in range(int(self.dims_count.get())):
+        for i in range(len(self.dims_paths)):
             self.create_file_selector(dims_frame, f"Dimensions file {i+1}", "dims", i)
+        
+        # Proceed button
+        self.proceed_button = ttk.Button(main_frame, text="Proceed with Analysis", 
+                                       command=self.proceed, state="disabled")
+        self.proceed_button.pack(pady=10)
     
     def create_file_selector(self, parent, label, file_type, index):
         frame = ttk.Frame(parent)
@@ -96,414 +338,395 @@ class ValueDimensionPCAGui:
     def verify_and_update_file(self, path, file_type, index):
         try:
             # Verify file can be read
-            df = pd.read_excel(path)
+            pd.read_excel(path, nrows=1)
             
-            # Validate column names for ratings files against dimensions
-            if file_type == "ratings" and self.dims_data:
-                dims_df = self.dims_data[min(index, len(self.dims_data)-1)]  # Get corresponding dims file
-                value_dims = dims_df['value_dimension'].tolist()  # Assuming this is the column name
-                
-                # Check if all value dimensions are present in ratings columns
-                missing_dims = [dim for dim in value_dims if dim not in df.columns]
-                extra_cols = [col for col in df.columns if col not in value_dims and col != 'prompt']
-                
-                if missing_dims or extra_cols:
-                    message = "Column name mismatch detected:\n\n"
-                    if missing_dims:
-                        message += f"Missing dimensions: {', '.join(missing_dims)}\n\n"
-                    if extra_cols:
-                        message += f"Extra columns: {', '.join(extra_cols)}\n\n"
-                    message += "Would you like to proceed anyway?"
-                    
-                    if not messagebox.askyesno("Column Validation", message, icon='warning'):
-                        raise ValueError("Column name validation failed")
-            
-            # Check for missing values
-            missing_rows = df.isnull().any(axis=1).sum()
-            missing_cols = df.isnull().any(axis=0).sum()
-            
-            if missing_rows > 0 or missing_cols > 0:
-                message = f"Missing values detected:\n\n" \
-                         f"Rows with missing values: {missing_rows}\n" \
-                         f"Columns with missing values: {missing_cols}\n\n" \
-                         f"How would you like to proceed?"
-                
-                choice = messagebox.askquestion("Missing Values",
-                    message,
-                    type='yesnocancel',
-                    icon='warning',
-                    detail="Yes = Remove rows with missing values\n" \
-                          "No = Remove columns with missing values\n" \
-                          "Cancel = Impute missing values with mean")
-                
-                if choice == 'yes':
-                    df = df.dropna(axis=0)
-                    messagebox.showinfo("Info", f"Removed {missing_rows} rows with missing values.")
-                elif choice == 'no':
-                    df = df.dropna(axis=1)
-                    messagebox.showinfo("Info", f"Removed {missing_cols} columns with missing values.")
-                elif choice == 'cancel':
-                    imputer = SimpleImputer(strategy='mean')
-                    df = pd.DataFrame(
-                        imputer.fit_transform(df),
-                        columns=df.columns,
-                        index=df.index
-                    )
-                    messagebox.showinfo("Info", "Missing values have been imputed with mean values.")
-            
-            # Store path and dataframe in appropriate list
+            # Store path in appropriate list
             if file_type == "ratings":
-                if len(self.ratings_paths) <= index:
-                    self.ratings_paths.append(path)
-                    self.ratings_data.append(df)
-                else:
-                    self.ratings_paths[index] = path
-                    self.ratings_data[index] = df
+                self.ratings_paths[index] = path
             else:
-                if len(self.dims_paths) <= index:
-                    self.dims_paths.append(path)
-                    self.dims_data.append(df)
-                else:
-                    self.dims_paths[index] = path
-                    self.dims_data[index] = df
+                self.dims_paths[index] = path
             
-            self.update_summary()
-            self.show_data_preview(df, file_type, index)
+            self.check_all_files_selected()
             
         except Exception as e:
             messagebox.showerror("Error", f"Could not read file: {str(e)}")
     
-    def show_data_preview(self, df, file_type, index):
-        """
-        Enhanced data preview with custom row count and column filtering
-        """
-        preview_window = tk.Toplevel(self.root)
-        preview_window.title(f"Data Preview - {file_type.capitalize()} File {index + 1}")
-        preview_window.geometry("1000x600")
-        
-        # Control frame
-        control_frame = ttk.Frame(preview_window, padding="5")
-        control_frame.pack(fill="x", padx=10, pady=5)
-        
-        # Row count selector
-        ttk.Label(control_frame, text="Preview Rows:").pack(side="left", padx=5)
-        row_count = ttk.Spinbox(control_frame, from_=1, to=100, width=5)
-        row_count.set(5)  # Default value
-        row_count.pack(side="left", padx=5)
-        
-        # Column filter
-        ttk.Label(control_frame, text="Filter Columns:").pack(side="left", padx=5)
-        column_var = tk.StringVar()
-        column_filter = ttk.Combobox(control_frame, textvariable=column_var, values=['All'] + list(df.columns))
-        column_filter.set('All')
-        column_filter.pack(side="left", padx=5)
-        
-        # Create preview frame
-        preview_frame = ttk.Frame(preview_window, padding="10")
-        preview_frame.pack(fill="both", expand=True)
-        
-        # Add preview text
-        preview_text = tk.Text(preview_frame, wrap=tk.NONE)
-        preview_text.pack(fill="both", expand=True)
-        
-        # Add scrollbars
-        y_scrollbar = ttk.Scrollbar(preview_frame, orient="vertical", command=preview_text.yview)
-        y_scrollbar.pack(side="right", fill="y")
-        x_scrollbar = ttk.Scrollbar(preview_frame, orient="horizontal", command=preview_text.xview)
-        x_scrollbar.pack(side="bottom", fill="x")
-        
-        preview_text.configure(yscrollcommand=y_scrollbar.set, xscrollcommand=x_scrollbar.set)
-        
-        def update_preview():
-            preview_text.configure(state='normal')
-            preview_text.delete(1.0, tk.END)
-            
-            # Filter dataframe based on selected column
-            filtered_df = df if column_filter.get() == 'All' else df[[column_filter.get()]]
-            
-            # Show dataframe info
-            preview_text.insert(tk.END, "=== DataFrame Info ===\n\n")
-            buffer = io.StringIO()
-            filtered_df.info(buf=buffer)
-            preview_text.insert(tk.END, buffer.getvalue() + "\n\n")
-            
-            # Show selected number of rows
-            n_rows = int(row_count.get())
-            preview_text.insert(tk.END, f"=== First {n_rows} Rows ===\n\n")
-            preview_text.insert(tk.END, filtered_df.head(n_rows).to_string() + "\n\n")
-            
-            # Show basic statistics
-            preview_text.insert(tk.END, "=== Basic Statistics ===\n\n")
-            preview_text.insert(tk.END, filtered_df.describe().to_string())
-            
-            preview_text.configure(state='disabled')
-        
-        # Update button
-        ttk.Button(control_frame, text="Update Preview", command=update_preview).pack(side="left", padx=20)
-        
-        # Close button
-        ttk.Button(preview_window, text="Close", command=preview_window.destroy).pack(pady=10)
-        
-        # Initial preview
-        update_preview()
-    
-    def update_summary(self):
-        self.summary_text.delete(1.0, tk.END)
-        self.summary_text.insert(tk.END, "=== Selected Files Summary ===\n\n")
-        
-        # Show ratings files
-        self.summary_text.insert(tk.END, "Ratings Spreadsheets:\n")
-        for i, path in enumerate(self.ratings_paths, 1):
-            if os.path.exists(path):
-                size = os.path.getsize(path) / (1024 * 1024)  # Convert to MB
-                df = pd.read_excel(path)
-                self.summary_text.insert(tk.END, 
-                    f"{i}. {os.path.basename(path)} ({size:.2f} MB)\n"
-                    f"   Columns: {', '.join(df.columns)}\n"
-                    f"   Rows: {len(df)}\n\n"
-                )
-        
-        # Show dimensions files
-        self.summary_text.insert(tk.END, "Dimensions Spreadsheets:\n")
-        for i, path in enumerate(self.dims_paths, 1):
-            if os.path.exists(path):
-                size = os.path.getsize(path) / (1024 * 1024)  # Convert to MB
-                df = pd.read_excel(path)
-                self.summary_text.insert(tk.END, 
-                    f"{i}. {os.path.basename(path)} ({size:.2f} MB)\n"
-                    f"   Columns: {', '.join(df.columns)}\n"
-                    f"   Rows: {len(df)}\n\n"
-                )
-        
+    def check_all_files_selected(self):
         # Enable proceed button if all files are selected
-        expected_total = int(self.ratings_count.get()) + int(self.dims_count.get())
-        actual_total = len(self.ratings_paths) + len(self.dims_paths)
-        self.proceed_button['state'] = 'normal' if actual_total == expected_total else 'disabled'
+        if all(self.ratings_paths) and all(self.dims_paths):
+            self.proceed_button['state'] = 'normal'
     
     def proceed(self):
-        # Here you would typically initialize your PCA analysis
-        pca = ValueDimensionPCA()
         try:
-            pca.load_data(self.ratings_paths, self.dims_paths)
-            messagebox.showinfo("Success", "Data loaded successfully!")
-            self.root.destroy()  # Close the GUI
+            print("Starting proceed method...")
+            # Use the class directly from this module
+            from pca_value_dim import ValueDimensionPCA  # Import from this module
+            pca = ValueDimensionPCA()
+            if pca.load_data(self.ratings_paths, self.dims_paths)[0]:  # Note: load_data returns a tuple
+                messagebox.showinfo("Success", "Files loaded successfully!")
+                self.show_visualization(pca)
+            else:
+                messagebox.showerror("Error", "Failed to load data")
         except Exception as e:
-            messagebox.showerror("Error", f"Error loading data: {str(e)}")
+            print(f"Error in proceed: {str(e)}")
+            messagebox.showerror("Error", f"Error processing files: {str(e)}")
+    
+    def show_visualization(self, pca):
+        # Clear current window
+        for widget in self.root.winfo_children():
+            widget.destroy()
+            
+        # Create visualization controls
+        self.create_visualization_controls(pca)
+    
+    def create_visualization_controls(self, pca):
+        """Create the visualization control panel"""
+        control_frame = ttk.LabelFrame(self.root, text="Visualization Controls", padding="10")
+        control_frame.pack(side="left", fill="y", padx=10, pady=5)
+        
+        # PC Selection
+        pc_frame = ttk.LabelFrame(control_frame, text="Principal Components", padding="5")
+        pc_frame.pack(fill="x", pady=5)
+        
+        self.pc_x = tk.StringVar(value="1")
+        self.pc_y = tk.StringVar(value="2")
+        
+        ttk.Label(pc_frame, text="X-axis PC:").pack()
+        ttk.Spinbox(pc_frame, from_=1, to=len(pca.components_), textvariable=self.pc_x).pack()
+        
+        ttk.Label(pc_frame, text="Y-axis PC:").pack()
+        ttk.Spinbox(pc_frame, from_=1, to=len(pca.components_), textvariable=self.pc_y).pack()
+        
+        # Visualization Type
+        viz_frame = ttk.LabelFrame(control_frame, text="Plot Type", padding="5")
+        viz_frame.pack(fill="x", pady=5)
+        
+        self.plot_type = tk.StringVar(value="scatter")
+        ttk.Radiobutton(viz_frame, text="Scatter Plot", value="scatter", 
+                       variable=self.plot_type).pack()
+        ttk.Radiobutton(viz_frame, text="Loading Plot", value="loading", 
+                       variable=self.plot_type).pack()
+        ttk.Radiobutton(viz_frame, text="Biplot", value="biplot", 
+                       variable=self.plot_type).pack()
+        
+        # Display Options
+        options_frame = ttk.LabelFrame(control_frame, text="Display Options", padding="5")
+        options_frame.pack(fill="x", pady=5)
+        
+        self.show_labels = tk.BooleanVar(value=True)
+        self.show_vectors = tk.BooleanVar(value=True)
+        self.show_ellipses = tk.BooleanVar(value=False)
+        self.show_legend = tk.BooleanVar(value=True)
+        
+        ttk.Checkbutton(options_frame, text="Show Labels", 
+                        variable=self.show_labels).pack()
+        ttk.Checkbutton(options_frame, text="Show Loading Vectors", 
+                        variable=self.show_vectors).pack()
+        ttk.Checkbutton(options_frame, text="Show Confidence Ellipses", 
+                        variable=self.show_ellipses).pack()
+        ttk.Checkbutton(options_frame, text="Show Legend", 
+                        variable=self.show_legend).pack()
+        
+        # Customization Options
+        custom_frame = ttk.LabelFrame(control_frame, text="Customization", padding="5")
+        custom_frame.pack(fill="x", pady=5)
+        
+        self.point_size = tk.StringVar(value="8")
+        self.vector_scale = tk.StringVar(value="1.0")
+        
+        ttk.Label(custom_frame, text="Point Size:").pack()
+        ttk.Entry(custom_frame, textvariable=self.point_size).pack()
+        
+        ttk.Label(custom_frame, text="Vector Scale:").pack()
+        ttk.Entry(custom_frame, textvariable=self.vector_scale).pack()
+        
+        # Update Button
+        ttk.Button(control_frame, text="Update Plot", 
+                   command=lambda: self.update_plot(pca)).pack(pady=10)
+    
+    def update_plot(self, pca):
+        """Update the visualization based on current settings"""
+        try:
+            # Get current settings
+            pc1 = int(self.pc_x.get()) - 1
+            pc2 = int(self.pc_y.get()) - 1
+            plot_type = self.plot_type.get()
+            
+            # Create figure based on plot type
+            if plot_type == "scatter":
+                self.create_scatter_plot(pca, pc1, pc2)
+            elif plot_type == "loading":
+                self.create_loading_plot(pca, pc1, pc2)
+            else:  # biplot
+                self.create_biplot(pca, pc1, pc2)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error updating plot: {str(e)}")
     
     def run(self):
         self.root.mainloop()
 
-    def create_3d_scatter(self, data, labels, title, prompts=None, color=None):
-        """
-        Enhanced 3D scatter plot with hover info and animation capabilities
-        """
-        fig = go.Figure(data=[go.Scatter3d(
-            x=data[:, 0],
-            y=data[:, 1],
-            z=data[:, 2],
-            mode='markers',
-            text=prompts if prompts is not None else labels,
-            hovertemplate="<b>Prompt:</b> %{text}<br>" +
-                         "<b>PC1:</b> %{x:.2f}<br>" +
-                         "<b>PC2:</b> %{y:.2f}<br>" +
-                         "<b>PC3:</b> %{z:.2f}<br>" +
-                         "<extra></extra>",
-            marker=dict(
-                size=8,
-                color=color if color else data[:, 0],
-                colorscale='Viridis',
-                opacity=0.8
-            )
-        )])
-        
-        fig.update_layout(
-            title=title,
-            scene=dict(
-                xaxis=dict(
-                    title='PC1',
-                    rangeslider=dict(visible=True)
-                ),
-                yaxis=dict(
-                    title='PC2',
-                    rangeslider=dict(visible=True)
-                ),
-                zaxis=dict(
-                    title='PC3',
-                    rangeslider=dict(visible=True)
-                ),
-            ),
-            updatemenus=[
-                dict(
-                    type='buttons',
-                    showactive=False,
-                    buttons=[
-                        dict(
-                            label='Play',
-                            method='animate',
-                            args=[None, {'frame': {'duration': 500, 'redraw': True},
-                                       'fromcurrent': True,
-                                       'transition': {'duration': 300,
-                                                    'easing': 'quadratic-in-out'}}]
-                        ),
-                        dict(
-                            label='Pause',
-                            method='animate',
-                            args=[[None], {'frame': {'duration': 0, 'redraw': False},
-                                         'mode': 'immediate',
-                                         'transition': {'duration': 0}}]
-                        )
-                    ]
-                )
-            ]
-        )
-        
-        # Add animation frames
-        frames = [
-            go.Frame(
-                data=[go.Scatter3d(
-                    x=data[:, 0] * np.cos(theta) - data[:, 1] * np.sin(theta),
-                    y=data[:, 0] * np.sin(theta) + data[:, 1] * np.cos(theta),
-                    z=data[:, 2]
-                )],
-                name=f'frame{i}'
-            )
-            for i, theta in enumerate(np.linspace(0, 2*np.pi, 30))
-        ]
-        fig.frames = frames
-        
-        return fig
-
-    def save_visualization(self, fig, filename, spreadsheet_names):
-        """
-        Save visualization with formatted filename
-        """
-        # Create abbreviated spreadsheet names
-        abbrev_names = '_'.join([name.split('.')[0][:3] for name in spreadsheet_names])
-        
-        # Determine visualization type
-        if isinstance(fig, go.Figure):
-            if any(trace.type == 'scatter3d' for trace in fig.data):
-                viz_type = '3d'
-            elif any(trace.type == 'heatmap' for trace in fig.data):
-                viz_type = 'hmap'
-            else:
-                viz_type = 'scat'
-        
-        # Format filename
-        formatted_filename = f"{abbrev_names}_{viz_type}_{filename}.png"
-        
-        # Save figure
-        fig.write_image(formatted_filename)
-        return formatted_filename
-
-class PCADashboard:
-    def setup_layout(self):
-        """
-        Enhanced dashboard layout with new features
-        """
-        # Previous layout code remains...
-        
-        # Add axis range controls
-        axis_controls = html.Div([
-            html.Div([
-                html.Label("PC1 Range:"),
-                dcc.RangeSlider(
-                    id='pc1-range',
-                    min=-10,
-                    max=10,
-                    step=0.1,
-                    value=[-5, 5],
-                    marks={i: str(i) for i in range(-10, 11, 2)}
-                )
-            ]),
-            html.Div([
-                html.Label("PC2 Range:"),
-                dcc.RangeSlider(
-                    id='pc2-range',
-                    min=-10,
-                    max=10,
-                    step=0.1,
-                    value=[-5, 5],
-                    marks={i: str(i) for i in range(-10, 11, 2)}
-                )
-            ]),
-            html.Div([
-                html.Label("PC3 Range:"),
-                dcc.RangeSlider(
-                    id='pc3-range',
-                    min=-10,
-                    max=10,
-                    step=0.1,
-                    value=[-5, 5],
-                    marks={i: str(i) for i in range(-10, 11, 2)}
-                )
-            ])
-        ])
-        
-        self.app.layout.children.insert(-1, axis_controls)
-
-    def setup_callbacks(self):
-        """
-        Enhanced callbacks with new features
-        """
-        @self.app.callback(
-            [Output('quadrant1', 'figure'),
-             Output('quadrant2', 'figure'),
-             Output('quadrant3', 'figure'),
-             Output('quadrant4', 'figure'),
-             Output('scatter-matrix-container', 'children'),
-             Output('scatter-matrix-container', 'style')],
-            [Input('q1-viz-type', 'value'),
-             Input('dataset-filter', 'value'),
-             Input('lda-topics-slider', 'value'),
-             Input('viz-mode', 'value'),
-             Input('color-input', 'value'),
-             Input('layout-style', 'value'),
-             Input('show-scatter-matrix', 'value'),
-             Input('pc1-range', 'value'),
-             Input('pc2-range', 'value'),
-             Input('pc3-range', 'value')]
-        )
-        def update_visualizations(viz_type, selected_datasets, n_topics,
-                                viz_mode, color, layout_style, show_matrix,
-                                pc1_range, pc2_range, pc3_range):
-            # Previous visualization code...
+    def create_scatter_plot(self, pca, pc1, pc2):
+        """Create scatter plot of PCA scores"""
+        try:
+            # Clear existing plot frame if it exists
+            if hasattr(self, 'plot_frame'):
+                self.plot_frame.destroy()
             
-            # Update axis ranges for 3D plots
-            if viz_type == '3d':
-                for fig in figures:
-                    fig.update_layout(
-                        scene=dict(
-                            xaxis_range=pc1_range,
-                            yaxis_range=pc2_range,
-                            zaxis_range=pc3_range
-                        )
+            # Create new plot frame
+            self.plot_frame = ttk.Frame(self.root)
+            self.plot_frame.pack(side="right", fill="both", expand=True)
+            
+            # Create figure
+            fig = Figure(figsize=(10, 8))
+            ax = fig.add_subplot(111)
+            
+            # Plot scores
+            scatter = ax.scatter(
+                pca.pca_ratings[:, pc1],
+                pca.pca_ratings[:, pc2],
+                s=float(self.point_size.get()),
+                alpha=0.6
+            )
+            
+            # Add labels if requested
+            if self.show_labels.get():
+                for i, txt in enumerate(pca.ratings_data.index):
+                    ax.annotate(
+                        txt,
+                        (pca.pca_ratings[i, pc1], pca.pca_ratings[i, pc2]),
+                        xytext=(5, 5),
+                        textcoords='offset points',
+                        fontsize=8
                     )
             
-            return figures + [scatter_matrix, matrix_style]
+            # Add confidence ellipses if requested
+            if self.show_ellipses.get():
+                self.add_confidence_ellipses(ax, pca, pc1, pc2)
+            
+            # Set labels and title
+            var_exp = pca.explained_variance_ratio_
+            ax.set_xlabel(f'PC{pc1+1} ({var_exp[pc1]:.1%} explained variance)')
+            ax.set_ylabel(f'PC{pc2+1} ({var_exp[pc2]:.1%} explained variance)')
+            ax.set_title('PCA Score Plot')
+            
+            # Add legend if requested
+            if self.show_legend.get():
+                ax.legend()
+            
+            # Add plot to GUI
+            canvas = FigureCanvasTkAgg(fig, master=self.plot_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill="both", expand=True)
+            
+            # Add toolbar
+            toolbar = NavigationToolbar2Tk(canvas, self.plot_frame)
+            toolbar.update()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error creating scatter plot: {str(e)}")
 
-        @self.app.callback(
-            Output('download-dataframe', 'data'),
-            Input('save-viz-button', 'n_clicks'),
-            State('q1-viz-type', 'value'),  # Add states for current visualization state
-            prevent_initial_call=True
-        )
-        def save_visualization(n_clicks, viz_type):
-            if n_clicks:
-                # Get current figures
-                figures = [
-                    self.app.get_asset_url(f'quadrant{i+1}')
-                    for i in range(4)
-                ]
-                
-                # Save each figure
-                filenames = []
-                for i, fig in enumerate(figures):
-                    filename = self.pca_analysis.save_visualization(
-                        fig,
-                        f'quadrant{i+1}',
-                        self.pca_analysis.spreadsheet_names  # Add this attribute to store loaded spreadsheet names
+    def create_loading_plot(self, pca, pc1, pc2):
+        """Create loading plot"""
+        try:
+            # Clear existing plot frame
+            if hasattr(self, 'plot_frame'):
+                self.plot_frame.destroy()
+            
+            # Create new plot frame
+            self.plot_frame = ttk.Frame(self.root)
+            self.plot_frame.pack(side="right", fill="both", expand=True)
+            
+            # Create figure
+            fig = Figure(figsize=(10, 8))
+            ax = fig.add_subplot(111)
+            
+            # Plot loadings
+            loadings = pca.components_
+            scale = float(self.vector_scale.get())
+            
+            # Add vectors if requested
+            if self.show_vectors.get():
+                for i, (x, y) in enumerate(zip(loadings[pc1], loadings[pc2])):
+                    ax.arrow(
+                        0, 0, x * scale, y * scale,
+                        head_width=0.05,
+                        head_length=0.1,
+                        fc='red',
+                        ec='red',
+                        alpha=0.5
                     )
-                    filenames.append(filename)
-                
-                return filenames
+            
+            # Add labels if requested
+            if self.show_labels.get():
+                for i, txt in enumerate(pca.original_dims):
+                    ax.annotate(
+                        txt,
+                        (loadings[pc1, i] * scale, loadings[pc2, i] * scale),
+                        xytext=(5, 5),
+                        textcoords='offset points',
+                        fontsize=8
+                    )
+            
+            # Set equal aspect ratio
+            ax.set_aspect('equal')
+            
+            # Add unit circle
+            circle = plt.Circle((0,0), 1, fill=False, linestyle='--', color='gray')
+            ax.add_artist(circle)
+            
+            # Set labels and title
+            var_exp = pca.explained_variance_ratio_
+            ax.set_xlabel(f'PC{pc1+1} ({var_exp[pc1]:.1%} explained variance)')
+            ax.set_ylabel(f'PC{pc2+1} ({var_exp[pc2]:.1%} explained variance)')
+            ax.set_title('PCA Loading Plot')
+            
+            # Set axis limits
+            limit = 1.2 * scale
+            ax.set_xlim(-limit, limit)
+            ax.set_ylim(-limit, limit)
+            
+            # Add plot to GUI
+            canvas = FigureCanvasTkAgg(fig, master=self.plot_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill="both", expand=True)
+            
+            # Add toolbar
+            toolbar = NavigationToolbar2Tk(canvas, self.plot_frame)
+            toolbar.update()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error creating loading plot: {str(e)}")
+
+    def create_biplot(self, pca, pc1, pc2):
+        """Create biplot (combined scores and loadings)"""
+        try:
+            # Clear existing plot frame
+            if hasattr(self, 'plot_frame'):
+                self.plot_frame.destroy()
+            
+            # Create new plot frame
+            self.plot_frame = ttk.Frame(self.root)
+            self.plot_frame.pack(side="right", fill="both", expand=True)
+            
+            # Create figure
+            fig = Figure(figsize=(10, 8))
+            ax = fig.add_subplot(111)
+            
+            # Plot scores
+            scores = pca.pca_ratings[:, [pc1, pc2]]
+            scatter = ax.scatter(
+                scores[:, 0],
+                scores[:, 1],
+                s=float(self.point_size.get()),
+                alpha=0.6,
+                c='blue',
+                label='Scores'
+            )
+            
+            # Add score labels if requested
+            if self.show_labels.get():
+                for i, txt in enumerate(pca.ratings_data.index):
+                    ax.annotate(
+                        txt,
+                        (scores[i, 0], scores[i, 1]),
+                        xytext=(5, 5),
+                        textcoords='offset points',
+                        fontsize=8,
+                        color='blue'
+                    )
+            
+            # Add loadings
+            loadings = pca.components_[[pc1, pc2]].T
+            scale = float(self.vector_scale.get())
+            scaled_loadings = loadings * scale
+            
+            # Add loading vectors if requested
+            if self.show_vectors.get():
+                for i, (x, y) in enumerate(scaled_loadings):
+                    ax.arrow(
+                        0, 0, x, y,
+                        head_width=0.05,
+                        head_length=0.1,
+                        fc='red',
+                        ec='red',
+                        alpha=0.5
+                    )
+            
+            # Add loading labels if requested
+            if self.show_labels.get():
+                for i, txt in enumerate(pca.original_dims):
+                    ax.annotate(
+                        txt,
+                        (scaled_loadings[i, 0], scaled_loadings[i, 1]),
+                        xytext=(5, 5),
+                        textcoords='offset points',
+                        fontsize=8,
+                        color='red'
+                    )
+            
+            # Add confidence ellipses if requested
+            if self.show_ellipses.get():
+                self.add_confidence_ellipses(ax, pca, pc1, pc2)
+            
+            # Set labels and title
+            var_exp = pca.explained_variance_ratio_
+            ax.set_xlabel(f'PC{pc1+1} ({var_exp[pc1]:.1%} explained variance)')
+            ax.set_ylabel(f'PC{pc2+1} ({var_exp[pc2]:.1%} explained variance)')
+            ax.set_title('PCA Biplot')
+            
+            # Add legend if requested
+            if self.show_legend.get():
+                ax.legend(['Scores', 'Loadings'])
+            
+            # Add plot to GUI
+            canvas = FigureCanvasTkAgg(fig, master=self.plot_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill="both", expand=True)
+            
+            # Add toolbar
+            toolbar = NavigationToolbar2Tk(canvas, self.plot_frame)
+            toolbar.update()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error creating biplot: {str(e)}")
+
+    def add_confidence_ellipses(self, ax, pca, pc1, pc2):
+        """Add confidence ellipses to the plot"""
+        from scipy.stats import chi2
+        
+        # Get the scores for the selected PCs
+        scores = pca.pca_ratings[:, [pc1, pc2]]
+        
+        # Calculate the covariance matrix
+        cov = np.cov(scores.T)
+        
+        # Calculate eigenvalues and eigenvectors
+        eigenvals, eigenvecs = np.linalg.eig(cov)
+        
+        # Sort eigenvalues and eigenvectors
+        sort_indices = np.argsort(eigenvals)[::-1]
+        eigenvals = eigenvals[sort_indices]
+        eigenvecs = eigenvecs[:, sort_indices]
+        
+        # Create theta values for ellipse
+        theta = np.linspace(0, 2*np.pi, 100)
+        
+        # Plot ellipses for different confidence levels
+        chi2_vals = [chi2.ppf(p, df=2) for p in [0.68, 0.95, 0.99]]
+        labels = ['68%', '95%', '99%']
+        
+        for chi2_val, label in zip(chi2_vals, labels):
+            # Calculate ellipse points
+            ellipse_x = (np.sqrt(chi2_val * eigenvals[0]) * 
+                        (np.cos(theta) * eigenvecs[0, 0] + np.sin(theta) * eigenvecs[0, 1]))
+            ellipse_y = (np.sqrt(chi2_val * eigenvals[1]) * 
+                        (np.cos(theta) * eigenvecs[1, 0] + np.sin(theta) * eigenvecs[1, 1]))
+            
+            # Plot ellipse
+            ax.plot(ellipse_x, ellipse_y, '--', label=f'{label} Confidence')
+
+# If you want to run directly from this file
+if __name__ == "__main__":
+    gui = ValueDimensionPCAGui()
+    gui.run()
