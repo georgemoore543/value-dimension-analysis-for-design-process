@@ -21,6 +21,8 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import matplotlib.pyplot as plt
 from scipy.stats import chi2
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 print("File loaded, ValueDimensionPCA will be defined at:", __name__)
 
@@ -36,6 +38,8 @@ class ValueDimensionPCA:
         self.explained_variance_ratio_ = None
         self.components_ = None
         self.prompts = None
+        self.cosine_ratings = None
+        self.current_ratings = None
         
     def validate_data(self, ratings_dfs: List[pd.DataFrame], dims_dfs: List[pd.DataFrame]) -> Tuple[bool, str]:
         """Validate the loaded data"""
@@ -134,69 +138,106 @@ class ValueDimensionPCA:
     def load_data(self, ratings_paths: List[str], dims_paths: List[str]):
         """Load and validate data files"""
         try:
-            print(f"Attempting to load data from:")
-            print(f"Ratings paths: {ratings_paths}")
-            print(f"Dimensions paths: {dims_paths}")
+            print("\nDEBUG: Starting data load process")
             
-            # Load data
+            # Load ratings files
             print("Loading ratings files...")
             ratings_dfs = []
             for path in ratings_paths:
-                print(f"Reading {path}")
+                print(f"\nReading {path}")
                 df = pd.read_excel(path)
                 print(f"Original shape: {df.shape}")
                 
-                # Store metadata if needed
+                # Store prompts before removing non-numeric columns
                 if 'Prompt' in df.columns:
+                    print("Storing prompts...")
                     self.prompts = df['Prompt'].to_dict()
-                
-                ratings_dfs.append(df)
+                    
+                    # Remove all non-numeric columns
+                    numeric_df = df.select_dtypes(include=['int64', 'float64'])
+                    print(f"Shape after removing non-numeric columns: {numeric_df.shape}")
+                    
+                    # Verify numeric data is valid
+                    if numeric_df.empty:
+                        raise ValueError("No numeric data found after removing text columns")
+                    if numeric_df.isnull().any().any():
+                        print("Warning: Found NaN values in numeric data")
+                    
+                    ratings_dfs.append(numeric_df)
+                else:
+                    print("Warning: No 'Prompt' column found")
+                    ratings_dfs.append(df)
             
-            print("Loading dimensions files...")
+            # Load dimensions files
+            print("\nLoading dimensions files...")
             dims_dfs = []
             for path in dims_paths:
-                print(f"Reading {path}")
+                print(f"Reading dimensions file: {path}")
                 df = pd.read_excel(path)
-                print(f"Shape: {df.shape}")
+                print(f"Dimensions shape: {df.shape}")
+                print(f"Dimensions columns: {df.columns.tolist()}")
                 dims_dfs.append(df)
             
-            # Validate and clean data
-            print("Validating data...")
-            is_valid, message = self.validate_data(ratings_dfs, dims_dfs)
-            if not is_valid:
-                return False, message
-            
             # Process validated data
-            print("Processing validated data...")
+            print("\nProcessing validated data...")
             self.ratings_data = pd.concat(ratings_dfs, axis=1)
-            self.value_dims = pd.concat(dims_dfs, axis=0)
-            self.original_dims = self.ratings_data.columns.tolist()
+            print(f"Final ratings data shape: {self.ratings_data.shape}")
             
-            # Perform PCA
-            print("Performing PCA...")
-            self.perform_pca()
+            self.value_dims = pd.concat(dims_dfs, axis=0)
+            print(f"Final dimensions data shape: {self.value_dims.shape}")
+            print(f"Dimensions columns: {self.value_dims.columns.tolist()}")
+            
+            # Initialize current_ratings
+            self.current_ratings = self.ratings_data.copy()
+            print("Current ratings initialized")
+            
             return True, "Data loaded successfully"
             
         except Exception as e:
             import traceback
-            print(f"Error loading data: {str(e)}")
+            print(f"\nError loading data: {str(e)}")
             print("Full traceback:")
             print(traceback.format_exc())
             return False, f"Error loading data: {str(e)}"
     
     def perform_pca(self):
-        """Perform PCA on the ratings data"""
-        # Standardize the data
-        scaler = StandardScaler()
-        scaled_data = scaler.fit_transform(self.ratings_data)
-        
-        # Perform PCA
-        self.pca = PCA()
-        self.pca_ratings = self.pca.fit_transform(scaled_data)
-        
-        # Store PCA results
-        self.explained_variance_ratio_ = self.pca.explained_variance_ratio_
-        self.components_ = self.pca.components_
+        """Perform PCA on the current ratings data"""
+        try:
+            print("\nDEBUG: Starting PCA process")
+            print(f"Current ratings type: {type(self.current_ratings)}")
+            if self.current_ratings is None:
+                print("ERROR: current_ratings is None")
+                return False
+            
+            print(f"Data shape: {self.current_ratings.shape}")
+            print("Sample of data:")
+            print(self.current_ratings.head())
+            print("\nChecking for NaN values:", self.current_ratings.isnull().sum().sum())
+            
+            # Standardize the data
+            scaler = StandardScaler()
+            print("\nAttempting to scale data...")
+            scaled_data = scaler.fit_transform(self.current_ratings)
+            print("Data scaled successfully")
+            
+            # Perform PCA
+            print("\nInitializing PCA...")
+            self.pca = PCA()
+            self.pca_ratings = self.pca.fit_transform(scaled_data)
+            print("PCA completed successfully")
+            
+            # Store PCA results
+            self.explained_variance_ratio_ = self.pca.explained_variance_ratio_
+            self.components_ = self.pca.components_
+            
+            return True
+            
+        except Exception as e:
+            import traceback
+            print(f"\nError performing PCA: {str(e)}")
+            print("Full traceback:")
+            print(traceback.format_exc())
+            return False
 
     def get_prompt_for_component(self, component_index: int, n_top: int = 5) -> List[Tuple[str, float]]:
         """Get the top contributing prompts for a given principal component"""
@@ -227,6 +268,62 @@ class ValueDimensionPCA:
                 fontsize=8
             )
 
+    def calculate_cosine_similarity(self, prompts, value_dims):
+        """Calculate cosine similarity between prompts and value dimensions"""
+        try:
+            print("\nDEBUG: Starting cosine similarity calculation")
+            if not prompts:
+                raise ValueError("No prompts available")
+            if value_dims is None or len(value_dims) == 0:
+                raise ValueError("No value dimensions available")
+            
+            print(f"Number of prompts: {len(prompts)}")
+            print(f"Value dimensions available: {value_dims.tolist()}")
+            
+            # Convert prompts dictionary to list of texts
+            prompt_texts = list(prompts.values())
+            dim_texts = value_dims.tolist()
+            
+            print("Initializing TF-IDF vectorizer...")
+            vectorizer = TfidfVectorizer(stop_words='english')
+            
+            print("Vectorizing texts...")
+            all_texts = prompt_texts + dim_texts
+            tfidf_matrix = vectorizer.fit_transform(all_texts)
+            
+            print("Calculating similarities...")
+            n_prompts = len(prompt_texts)
+            prompt_vectors = tfidf_matrix[:n_prompts]
+            dim_vectors = tfidf_matrix[n_prompts:]
+            
+            similarity_matrix = cosine_similarity(prompt_vectors, dim_vectors)
+            print(f"Similarity matrix shape: {similarity_matrix.shape}")
+            
+            # Create DataFrame with correct column names
+            self.cosine_ratings = pd.DataFrame(
+                similarity_matrix,
+                index=self.ratings_data.index,
+                columns=[f"{dim}_Rating" for dim in value_dims]  # Add '_Rating' suffix to match original columns
+            )
+            
+            # Add the '#' column if it exists in the original ratings
+            if '#' in self.ratings_data.columns:
+                self.cosine_ratings.insert(0, '#', self.ratings_data['#'])
+            
+            print("Cosine similarity calculation complete")
+            print("Cosine ratings shape:", self.cosine_ratings.shape)
+            print("Original ratings shape:", self.ratings_data.shape)
+            print("Sample of cosine similarities:")
+            print(self.cosine_ratings.head())
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error calculating cosine similarity: {str(e)}")
+            print(f"Prompts available: {bool(prompts)}")
+            print(f"Value dims available: {value_dims is not None}")
+            return False
+
 # Then, the GUI class
 class ValueDimensionPCAGui:
     # Add the PCA class as a class attribute
@@ -234,8 +331,9 @@ class ValueDimensionPCAGui:
     
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("PCA Analysis")
-        self.root.geometry("800x600")
+        self.root.title("Value Dimension PCA Analysis")
+        self.pca_instance = None
+        self.ratings_type = tk.StringVar(value="original")
         
         # Initialize data structures
         self.ratings_paths = []
@@ -356,33 +454,115 @@ class ValueDimensionPCAGui:
         if all(self.ratings_paths) and all(self.dims_paths):
             self.proceed_button['state'] = 'normal'
     
+    def load_and_prepare_data(self):
+        """Load data and prepare both ratings types"""
+        try:
+            print("Starting data preparation...")
+            self.pca_instance = ValueDimensionPCA()
+            
+            # Load initial data
+            success, message = self.pca_instance.load_data(self.ratings_paths, self.dims_paths)
+            if not success:
+                messagebox.showerror("Error", message)
+                return False
+
+            # Calculate cosine similarities
+            print("Calculating cosine similarities...")
+            success = self.pca_instance.calculate_cosine_similarity(
+                self.pca_instance.prompts,
+                self.pca_instance.value_dims['value dimensions']
+            )
+            if not success:
+                messagebox.showerror("Error", "Failed to calculate cosine similarities")
+                return False
+
+            # Ask user which ratings to use
+            response = messagebox.askyesno(
+                "Select Ratings Type",
+                "Data prepared successfully!\n\n"
+                "Would you like to use cosine similarity scores?\n"
+                "(No will use original ratings)"
+            )
+            
+            # Set initial ratings type based on user choice
+            self.ratings_type.set("cosine" if response else "original")
+            self.pca_instance.current_ratings = (
+                self.pca_instance.cosine_ratings if response 
+                else self.pca_instance.ratings_data
+            )
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error in data preparation: {str(e)}")
+            messagebox.showerror("Error", f"Failed to prepare data: {str(e)}")
+            return False
+
     def proceed(self):
+        """Modified proceed method"""
         try:
             print("Starting proceed method...")
-            # Use the class directly from this module
-            from pca_value_dim import ValueDimensionPCA  # Import from this module
-            pca = ValueDimensionPCA()
-            if pca.load_data(self.ratings_paths, self.dims_paths)[0]:  # Note: load_data returns a tuple
-                messagebox.showinfo("Success", "Files loaded successfully!")
-                self.show_visualization(pca)
-            else:
-                messagebox.showerror("Error", "Failed to load data")
+            
+            # Load and prepare all data first
+            if not self.load_and_prepare_data():
+                return
+            
+            # Perform initial PCA
+            print("Performing initial PCA...")
+            if not self.pca_instance.perform_pca():
+                messagebox.showerror("Error", "PCA calculation failed")
+                return
+            
+            # Show visualization with toggle option
+            print("Showing visualization...")
+            self.show_visualization(self.pca_instance)
+            
         except Exception as e:
             print(f"Error in proceed: {str(e)}")
             messagebox.showerror("Error", f"Error processing files: {str(e)}")
     
     def show_visualization(self, pca):
-        # Clear current window
-        for widget in self.root.winfo_children():
-            widget.destroy()
+        """Show PCA visualization"""
+        try:
+            print("Creating visualization window...")
+            if not hasattr(self, 'viz_window'):
+                self.viz_window = tk.Toplevel(self.root)
+                self.viz_window.title("PCA Visualization")
             
-        # Create visualization controls
-        self.create_visualization_controls(pca)
+            print("Creating visualization controls...")
+            self.create_visualization_controls(pca)
+            
+            print("Initial plot update...")
+            self.update_plot(pca)
+            
+        except Exception as e:
+            print(f"Error in show_visualization: {str(e)}")
+            raise  # Re-raise the exception to be caught by proceed()
     
     def create_visualization_controls(self, pca):
-        """Create the visualization control panel"""
-        control_frame = ttk.LabelFrame(self.root, text="Visualization Controls", padding="10")
-        control_frame.pack(side="left", fill="y", padx=10, pady=5)
+        """Create visualization controls including ratings toggle"""
+        control_frame = ttk.Frame(self.viz_window)
+        control_frame.pack(fill="x", padx=10, pady=5)
+        
+        # Ratings type toggle
+        ratings_frame = ttk.LabelFrame(control_frame, text="Ratings Type", padding="5")
+        ratings_frame.pack(fill="x", pady=5)
+        
+        ttk.Radiobutton(
+            ratings_frame,
+            text="Original Ratings",
+            variable=self.ratings_type,
+            value="original",
+            command=self.update_ratings_type
+        ).pack(side="left", padx=5)
+        
+        ttk.Radiobutton(
+            ratings_frame,
+            text="Cosine Similarity Scores",
+            variable=self.ratings_type,
+            value="cosine",
+            command=self.update_ratings_type
+        ).pack(side="left", padx=5)
         
         # PC Selection
         pc_frame = ttk.LabelFrame(control_frame, text="Principal Components", padding="5")
@@ -725,6 +905,38 @@ class ValueDimensionPCAGui:
             
             # Plot ellipse
             ax.plot(ellipse_x, ellipse_y, '--', label=f'{label} Confidence')
+
+    def update_ratings_type(self):
+        """Handle ratings type selection"""
+        try:
+            print(f"\nDEBUG: Updating ratings type to: {self.ratings_type.get()}")
+            
+            if not hasattr(self, 'pca_instance'):
+                print("No PCA instance available")
+                return
+            
+            if self.ratings_type.get() == "original":
+                print("Switching to original ratings")
+                self.pca_instance.current_ratings = self.pca_instance.ratings_data
+            else:
+                print("Switching to cosine similarity ratings")
+                self.pca_instance.current_ratings = self.pca_instance.cosine_ratings
+            
+            # Update PCA with new ratings
+            print("Performing PCA with updated ratings")
+            if self.pca_instance.perform_pca():
+                print("PCA completed successfully")
+                if hasattr(self, 'update_plot'):
+                    print("Updating visualization")
+                    self.update_plot(self.pca_instance)
+            else:
+                print("PCA calculation failed")
+                messagebox.showerror("Error", "Failed to update PCA calculation")
+            
+        except Exception as e:
+            print(f"Error updating ratings type: {str(e)}")
+            messagebox.showerror("Error", f"Failed to update ratings type: {str(e)}")
+            self.ratings_type.set("original")
 
 # If you want to run directly from this file
 if __name__ == "__main__":
