@@ -13,6 +13,7 @@ import openpyxl
 from typing import List, Dict, Tuple
 import warnings
 from sklearn.impute import SimpleImputer
+import os
 
 class ValueDimensionPCA:
     def __init__(self):
@@ -371,6 +372,109 @@ class ValueDimensionPCA:
         # Save figure
         fig.write_image(formatted_filename)
         return formatted_filename
+
+    def get_user_inputs(self) -> Tuple[List[str], List[str]]:
+        """
+        Collect file paths from user input with verification and summary
+        Returns: Tuple of (ratings_paths, dims_paths)
+        """
+        def verify_path(path: str) -> bool:
+            """Helper function to verify file exists and is readable"""
+            try:
+                if os.path.exists(path):
+                    pd.read_excel(path, nrows=1)  # Try to read first row
+                    return True
+                return False
+            except Exception:
+                return False
+
+        # Get number of files
+        while True:
+            try:
+                num_ratings = int(input("\nHow many ratings spreadsheets would you like to import? "))
+                num_dims = int(input("How many dimension spreadsheets would you like to import? "))
+                if num_ratings > 0 and num_dims > 0:
+                    break
+                print("Please enter numbers greater than 0.")
+            except ValueError:
+                print("Please enter valid numbers.")
+        
+        # Collect and verify ratings file paths
+        ratings_paths = []
+        print("\n--- Ratings Spreadsheet Paths ---")
+        for i in range(num_ratings):
+            while True:
+                path = input(f"Enter the file path for ratings spreadsheet #{i+1}: ").strip()
+                if not path.endswith(('.xlsx', '.xls')):
+                    print("Please enter a valid Excel file path (ending in .xlsx or .xls)")
+                    continue
+                
+                if verify_path(path):
+                    ratings_paths.append(path)
+                    print(f"✓ File verified successfully!")
+                    break
+                else:
+                    print("❌ Error: File not found or not readable. Please check the path and try again.")
+        
+        # Collect and verify dimensions file paths
+        dims_paths = []
+        print("\n--- Dimensions Spreadsheet Paths ---")
+        for i in range(num_dims):
+            while True:
+                path = input(f"Enter the file path for dimensions spreadsheet #{i+1}: ").strip()
+                if not path.endswith(('.xlsx', '.xls')):
+                    print("Please enter a valid Excel file path (ending in .xlsx or .xls)")
+                    continue
+                
+                if verify_path(path):
+                    dims_paths.append(path)
+                    print(f"✓ File verified successfully!")
+                    break
+                else:
+                    print("❌ Error: File not found or not readable. Please check the path and try again.")
+        
+        # Show summary of selected files
+        print("\n=== Summary of Selected Files ===")
+        print("\nRatings Spreadsheets:")
+        for i, path in enumerate(ratings_paths, 1):
+            size = os.path.getsize(path) / (1024 * 1024)  # Convert to MB
+            print(f"{i}. {os.path.basename(path)} ({size:.2f} MB)")
+            # Show preview of first few rows
+            df = pd.read_excel(path, nrows=3)
+            print(f"   Columns: {', '.join(df.columns)}")
+            print(f"   Rows: {len(pd.read_excel(path))}")
+        
+        print("\nDimensions Spreadsheets:")
+        for i, path in enumerate(dims_paths, 1):
+            size = os.path.getsize(path) / (1024 * 1024)  # Convert to MB
+            print(f"{i}. {os.path.basename(path)} ({size:.2f} MB)")
+            # Show preview of first few rows
+            df = pd.read_excel(path, nrows=3)
+            print(f"   Columns: {', '.join(df.columns)}")
+            print(f"   Rows: {len(pd.read_excel(path))}")
+        
+        # Confirm proceed
+        while True:
+            confirm = input("\nWould you like to proceed with these files? (yes/no): ").lower()
+            if confirm == 'yes':
+                return ratings_paths, dims_paths
+            elif confirm == 'no':
+                print("\nRestarting file selection process...")
+                return self.get_user_inputs()
+            else:
+                print("Please enter 'yes' or 'no'")
+
+    def initialize_data(self):
+        """
+        New method to handle the complete initialization process
+        """
+        try:
+            ratings_paths, dims_paths = self.get_user_inputs()
+            self.load_data(ratings_paths, dims_paths)
+            print("\nData loaded successfully!")
+        except Exception as e:
+            print(f"\nError loading data: {str(e)}")
+            raise
 
 # Dashboard class for interactive visualization
 class PCADashboard:
