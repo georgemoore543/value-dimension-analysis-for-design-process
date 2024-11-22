@@ -23,6 +23,8 @@ import matplotlib.pyplot as plt
 from scipy.stats import chi2
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import plotly.offline as pyo
+import webbrowser  # For opening the plot in browser if needed
 
 print("File loaded, ValueDimensionPCA will be defined at:", __name__)
 
@@ -225,21 +227,6 @@ class ValueDimensionPCA:
             results.append((prompt, loading))
         
         return results
-
-    def create_loading_plot(self, pc1: int, pc2: int):
-        """Create loading plot with prompt labels"""
-        # Your existing plotting code, but use prompts for labels
-        loadings = self.components_
-        for i, (x, y) in enumerate(zip(loadings[pc1], loadings[pc2])):
-            prompt = self.prompts.get(self.original_dims[i], "Unknown")
-            # Add prompt as label
-            plt.annotate(
-                prompt[:30] + "..." if len(prompt) > 30 else prompt,
-                (x, y),
-                xytext=(5, 5),
-                textcoords='offset points',
-                fontsize=8
-            )
 
     def calculate_cosine_similarity(self, prompts, value_dims):
         """Calculate cosine similarity between prompts and value dimensions"""
@@ -730,7 +717,7 @@ class ValueDimensionPCAGui:
             plot_controls = ttk.LabelFrame(control_frame, text="Plot Controls", padding="5")
             plot_controls.pack(fill="x", pady=5)
             
-            # PC selection
+            # PC selection (only needed for scatter plot)
             self.pc_x = tk.StringVar(value="1")
             self.pc_y = tk.StringVar(value="2")
             
@@ -740,13 +727,13 @@ class ValueDimensionPCAGui:
             ttk.Entry(plot_controls, textvariable=self.pc_y, width=3).pack(side="left")
             
             # Point size control
-            self.point_size = tk.StringVar(value="50")  # Default point size
+            self.point_size = tk.StringVar(value="50")
             ttk.Label(plot_controls, text="Point Size:").pack(side="left", padx=5)
             ttk.Entry(plot_controls, textvariable=self.point_size, width=4).pack(side="left")
             
-            # Plot type selection
+            # Plot type selection (simplified)
             self.plot_type = tk.StringVar(value="scatter")
-            plot_types = ["scatter", "loading", "biplot"]
+            plot_types = ["scatter", "matrix"]
             for plot_type in plot_types:
                 ttk.Radiobutton(
                     plot_controls,
@@ -765,20 +752,21 @@ class ValueDimensionPCAGui:
     def update_plot(self, pca):
         """Update the visualization based on current settings"""
         try:
-            # Get current settings
-            pc1 = int(self.pc_x.get()) - 1
-            pc2 = int(self.pc_y.get()) - 1
             plot_type = self.plot_type.get()
             
-            # Create figure based on plot type
-            if plot_type == "scatter":
-                self.create_scatter_plot(pca, pc1, pc2)
-            elif plot_type == "loading":
-                self.create_loading_plot(pca, pc1, pc2)
-            else:  # biplot
-                self.create_biplot(pca, pc1, pc2)
+            # Clear previous plot
+            for widget in self.fig_frame.winfo_children():
+                widget.destroy()
             
+            if plot_type == "matrix":
+                self.create_matrix_plot(pca)
+            else:  # scatter
+                pc1 = int(self.pc_x.get()) - 1
+                pc2 = int(self.pc_y.get()) - 1
+                self.create_scatter_plot(pca, pc1, pc2)
+                
         except Exception as e:
+            print(f"Error updating plot: {str(e)}")
             messagebox.showerror("Error", f"Error updating plot: {str(e)}")
     
     def run(self):
@@ -826,205 +814,90 @@ class ValueDimensionPCAGui:
             print(f"Error creating scatter plot: {str(e)}")
             raise
 
-    def create_loading_plot(self, pca, pc1, pc2):
-        """Create loading plot"""
+    def create_matrix_plot(self, pca):
+        """Create 3x3 interactive scatterplot matrix of top 3 PCs"""
         try:
-            # Clear existing plot frame
-            if hasattr(self, 'plot_frame'):
-                self.plot_frame.destroy()
+            print("Creating matrix plot...")
             
-            # Create new plot frame
-            self.plot_frame = ttk.Frame(self.root)
-            self.plot_frame.pack(side="right", fill="both", expand=True)
-            
-            # Create figure
-            fig = Figure(figsize=(10, 8))
-            ax = fig.add_subplot(111)
-            
-            # Plot loadings
-            loadings = pca.components_
-            scale = float(self.vector_scale.get())
-            
-            # Add vectors if requested
-            if self.show_vectors.get():
-                for i, (x, y) in enumerate(zip(loadings[pc1], loadings[pc2])):
-                    ax.arrow(
-                        0, 0, x * scale, y * scale,
-                        head_width=0.05,
-                        head_length=0.1,
-                        fc='red',
-                        ec='red',
-                        alpha=0.5
-                    )
-            
-            # Add labels if requested
-            if self.show_labels.get():
-                for i, txt in enumerate(pca.original_dims):
-                    ax.annotate(
-                        txt,
-                        (loadings[pc1, i] * scale, loadings[pc2, i] * scale),
-                        xytext=(5, 5),
-                        textcoords='offset points',
-                        fontsize=8
-                    )
-            
-            # Set equal aspect ratio
-            ax.set_aspect('equal')
-            
-            # Add unit circle
-            circle = plt.Circle((0,0), 1, fill=False, linestyle='--', color='gray')
-            ax.add_artist(circle)
-            
-            # Set labels and title
-            var_exp = pca.explained_variance_ratio_
-            ax.set_xlabel(f'PC{pc1+1} ({var_exp[pc1]:.1%} explained variance)')
-            ax.set_ylabel(f'PC{pc2+1} ({var_exp[pc2]:.1%} explained variance)')
-            ax.set_title('PCA Loading Plot')
-            
-            # Set axis limits
-            limit = 1.2 * scale
-            ax.set_xlim(-limit, limit)
-            ax.set_ylim(-limit, limit)
-            
-            # Add plot to GUI
-            canvas = FigureCanvasTkAgg(fig, master=self.plot_frame)
-            canvas.draw()
-            canvas.get_tk_widget().pack(fill="both", expand=True)
-            
-            # Add toolbar
-            toolbar = NavigationToolbar2Tk(canvas, self.plot_frame)
-            toolbar.update()
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Error creating loading plot: {str(e)}")
-
-    def create_biplot(self, pca, pc1, pc2):
-        """Create biplot (combined scores and loadings)"""
-        try:
-            # Clear existing plot frame
-            if hasattr(self, 'plot_frame'):
-                self.plot_frame.destroy()
-            
-            # Create new plot frame
-            self.plot_frame = ttk.Frame(self.root)
-            self.plot_frame.pack(side="right", fill="both", expand=True)
-            
-            # Create figure
-            fig = Figure(figsize=(10, 8))
-            ax = fig.add_subplot(111)
-            
-            # Plot scores
-            scores = pca.pca_ratings[:, [pc1, pc2]]
-            scatter = ax.scatter(
-                scores[:, 0],
-                scores[:, 1],
-                s=float(self.point_size.get()),
-                alpha=0.6,
-                c='blue',
-                label='Scores'
+            # Create 3x3 subplot figure
+            fig = make_subplots(
+                rows=3, cols=3,
+                subplot_titles=[f'PC{i+1} vs PC{j+1}' for i in range(3) for j in range(3)]
             )
             
-            # Add score labels if requested
-            if self.show_labels.get():
-                for i, txt in enumerate(pca.ratings_data.index):
-                    ax.annotate(
-                        txt,
-                        (scores[i, 0], scores[i, 1]),
-                        xytext=(5, 5),
-                        textcoords='offset points',
-                        fontsize=8,
-                        color='blue'
+            # Get top 3 PCs
+            pc_data = pca.pca_ratings[:, :3]
+            
+            # Create scatterplots for each combination
+            for i in range(3):
+                for j in range(3):
+                    # Get data for current plot
+                    x = pc_data[:, i]
+                    y = pc_data[:, j]
+                    
+                    # Create hover text
+                    hover_text = [f"Prompt: {prompt}<br>PC{i+1}: {x_val:.3f}<br>PC{j+1}: {y_val:.3f}" 
+                                for prompt, x_val, y_val in zip(pca.prompts.values(), x, y)]
+                    
+                    # Add scatter plot
+                    fig.add_trace(
+                        go.Scatter(
+                            x=x,
+                            y=y,
+                            mode='markers',
+                            marker=dict(size=8),
+                            hovertext=hover_text,
+                            hoverinfo='text',
+                            showlegend=False
+                        ),
+                        row=i+1, col=j+1
                     )
+                    
+                    # Update axes labels
+                    fig.update_xaxes(title_text=f'PC{i+1}', row=i+1, col=j+1)
+                    fig.update_yaxes(title_text=f'PC{j+1}', row=i+1, col=j+1)
             
-            # Add loadings
-            loadings = pca.components_[[pc1, pc2]].T
-            scale = float(self.vector_scale.get())
-            scaled_loadings = loadings * scale
+            # Update layout
+            fig.update_layout(
+                height=800,
+                width=800,
+                title='PCA Components Matrix Plot',
+                showlegend=False,
+                template='plotly_white'
+            )
             
-            # Add loading vectors if requested
-            if self.show_vectors.get():
-                for i, (x, y) in enumerate(scaled_loadings):
-                    ax.arrow(
-                        0, 0, x, y,
-                        head_width=0.05,
-                        head_length=0.1,
-                        fc='red',
-                        ec='red',
-                        alpha=0.5
-                    )
+            # If we have a previous plot, clear it
+            if hasattr(self, 'matrix_frame'):
+                self.matrix_frame.destroy()
             
-            # Add loading labels if requested
-            if self.show_labels.get():
-                for i, txt in enumerate(pca.original_dims):
-                    ax.annotate(
-                        txt,
-                        (scaled_loadings[i, 0], scaled_loadings[i, 1]),
-                        xytext=(5, 5),
-                        textcoords='offset points',
-                        fontsize=8,
-                        color='red'
-                    )
+            # Create frame for the plot
+            self.matrix_frame = ttk.Frame(self.fig_frame)
+            self.matrix_frame.pack(fill=tk.BOTH, expand=True)
             
-            # Add confidence ellipses if requested
-            if self.show_ellipses.get():
-                self.add_confidence_ellipses(ax, pca, pc1, pc2)
+            # Generate HTML and create a temporary file
+            html_path = "pca_matrix_plot.html"
+            pyo.plot(fig, filename=html_path, auto_open=False)
             
-            # Set labels and title
-            var_exp = pca.explained_variance_ratio_
-            ax.set_xlabel(f'PC{pc1+1} ({var_exp[pc1]:.1%} explained variance)')
-            ax.set_ylabel(f'PC{pc2+1} ({var_exp[pc2]:.1%} explained variance)')
-            ax.set_title('PCA Biplot')
+            # Create button to open plot in browser
+            ttk.Button(
+                self.matrix_frame,
+                text="Open Interactive Plot in Browser",
+                command=lambda: webbrowser.open(html_path)
+            ).pack(pady=10)
             
-            # Add legend if requested
-            if self.show_legend.get():
-                ax.legend(['Scores', 'Loadings'])
+            # Also display a static message
+            ttk.Label(
+                self.matrix_frame,
+                text="Click the button above to view the interactive plot in your browser"
+            ).pack(pady=5)
             
-            # Add plot to GUI
-            canvas = FigureCanvasTkAgg(fig, master=self.plot_frame)
-            canvas.draw()
-            canvas.get_tk_widget().pack(fill="both", expand=True)
-            
-            # Add toolbar
-            toolbar = NavigationToolbar2Tk(canvas, self.plot_frame)
-            toolbar.update()
+            print("Matrix plot created successfully")
             
         except Exception as e:
-            messagebox.showerror("Error", f"Error creating biplot: {str(e)}")
-
-    def add_confidence_ellipses(self, ax, pca, pc1, pc2):
-        """Add confidence ellipses to the plot"""
-        from scipy.stats import chi2
-        
-        # Get the scores for the selected PCs
-        scores = pca.pca_ratings[:, [pc1, pc2]]
-        
-        # Calculate the covariance matrix
-        cov = np.cov(scores.T)
-        
-        # Calculate eigenvalues and eigenvectors
-        eigenvals, eigenvecs = np.linalg.eig(cov)
-        
-        # Sort eigenvalues and eigenvectors
-        sort_indices = np.argsort(eigenvals)[::-1]
-        eigenvals = eigenvals[sort_indices]
-        eigenvecs = eigenvecs[:, sort_indices]
-        
-        # Create theta values for ellipse
-        theta = np.linspace(0, 2*np.pi, 100)
-        
-        # Plot ellipses for different confidence levels
-        chi2_vals = [chi2.ppf(p, df=2) for p in [0.68, 0.95, 0.99]]
-        labels = ['68%', '95%', '99%']
-        
-        for chi2_val, label in zip(chi2_vals, labels):
-            # Calculate ellipse points
-            ellipse_x = (np.sqrt(chi2_val * eigenvals[0]) * 
-                        (np.cos(theta) * eigenvecs[0, 0] + np.sin(theta) * eigenvecs[0, 1]))
-            ellipse_y = (np.sqrt(chi2_val * eigenvals[1]) * 
-                        (np.cos(theta) * eigenvecs[1, 0] + np.sin(theta) * eigenvecs[1, 1]))
-            
-            # Plot ellipse
-            ax.plot(ellipse_x, ellipse_y, '--', label=f'{label} Confidence')
+            print(f"Error creating matrix plot: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     def update_ratings_type(self):
         """Handle ratings type selection"""
