@@ -141,6 +141,18 @@ class ValueDimensionPCA:
         """Load and validate data files"""
         try:
             print("\nDEBUG: Starting data load process")
+            print("Loading dimensions files...")
+            dims_dfs = []
+            for path in dims_paths:
+                print(f"Reading dimensions file: {path}")
+                df = pd.read_excel(path)
+                print(f"Dimensions shape: {df.shape}")
+                print(f"Dimensions columns: {df.columns.tolist()}")
+                dims_dfs.append(df)
+            
+            self.value_dims = pd.concat(dims_dfs, axis=0)
+            print(f"Combined dimensions shape: {self.value_dims.shape}")
+            print(f"Available columns: {self.value_dims.columns.tolist()}")
             
             # Load ratings files
             print("Loading ratings files...")
@@ -238,11 +250,27 @@ class ValueDimensionPCA:
                 raise ValueError("No value dimensions available")
             
             print(f"Number of prompts: {len(prompts)}")
-            print(f"Value dimensions available: {value_dims.tolist()}")
+            
+            # Handle value_dims whether it's a Series or DataFrame
+            if isinstance(value_dims, pd.DataFrame):
+                print("Value dimensions DataFrame detected")
+                # If we have definitions, combine them with dimension names
+                if 'dim_definitions' in value_dims.columns:
+                    print("Using dimension names and definitions")
+                    dim_texts = [f"{dim} - {def_}" if pd.notna(def_) else dim 
+                               for dim, def_ in zip(value_dims['value dimensions'], 
+                                                  value_dims['dim_definitions'])]
+                else:
+                    print("Using dimension names only")
+                    dim_texts = value_dims['value dimensions'].tolist()
+            else:
+                print("Value dimensions Series detected")
+                dim_texts = value_dims.tolist()
+            
+            print(f"Value dimensions available: {dim_texts}")
             
             # Convert prompts dictionary to list of texts
             prompt_texts = list(prompts.values())
-            dim_texts = value_dims.tolist()
             
             print("Initializing TF-IDF vectorizer...")
             vectorizer = TfidfVectorizer(stop_words='english')
@@ -259,20 +287,19 @@ class ValueDimensionPCA:
             similarity_matrix = cosine_similarity(prompt_vectors, dim_vectors)
             print(f"Similarity matrix shape: {similarity_matrix.shape}")
             
-            # Create DataFrame with correct column names
+            # Create DataFrame with original dimension names as columns
+            if isinstance(value_dims, pd.DataFrame):
+                dim_names = value_dims['value dimensions'].tolist()
+            else:
+                dim_names = value_dims.tolist()
+            
             self.cosine_ratings = pd.DataFrame(
                 similarity_matrix,
                 index=self.ratings_data.index,
-                columns=[f"{dim}_Rating" for dim in value_dims]  # Add '_Rating' suffix to match original columns
+                columns=[f"{dim}_Rating" for dim in dim_names]
             )
             
-            # Add the '#' column if it exists in the original ratings
-            if '#' in self.ratings_data.columns:
-                self.cosine_ratings.insert(0, '#', self.ratings_data['#'])
-            
             print("Cosine similarity calculation complete")
-            print("Cosine ratings shape:", self.cosine_ratings.shape)
-            print("Original ratings shape:", self.ratings_data.shape)
             print("Sample of cosine similarities:")
             print(self.cosine_ratings.head())
             
