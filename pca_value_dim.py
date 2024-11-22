@@ -25,6 +25,9 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import plotly.offline as pyo
 import webbrowser  # For opening the plot in browser if needed
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.cluster import KMeans
+import seaborn as sns
 
 print("File loaded, ValueDimensionPCA will be defined at:", __name__)
 
@@ -309,6 +312,36 @@ class ValueDimensionPCA:
             print(f"Error calculating cosine similarity: {str(e)}")
             print(f"Prompts available: {bool(prompts)}")
             print(f"Value dims available: {value_dims is not None}")
+            return False
+
+    def perform_clustering(self, n_clusters=3):
+        """Perform clustering on PCA results"""
+        try:
+            print("\nDEBUG: Starting clustering analysis")
+            
+            # Use top 3 PCs for clustering
+            clustering_data = self.pca_ratings[:, :3]
+            print(f"Clustering data shape: {clustering_data.shape}")
+            
+            # Perform K-means clustering
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+            self.cluster_labels = kmeans.fit_predict(clustering_data)
+            print(f"Unique clusters: {np.unique(self.cluster_labels)}")
+            
+            # Perform LDA
+            lda = LinearDiscriminantAnalysis()
+            self.lda_transformed = lda.fit_transform(clustering_data, self.cluster_labels)
+            print("LDA transformation complete")
+            
+            # Store cluster centers and explained variance
+            self.cluster_centers = kmeans.cluster_centers_
+            self.lda_explained_variance = lda.explained_variance_ratio_
+            
+            print("Clustering analysis complete")
+            return True
+            
+        except Exception as e:
+            print(f"Error in clustering: {str(e)}")
             return False
 
 # Then, the GUI class
@@ -712,7 +745,7 @@ class ValueDimensionPCAGui:
             messagebox.showerror("Error", f"Failed to update summary: {str(e)}")
 
     def create_visualization_controls(self, parent):
-        """Create visualization controls including ratings toggle and plot controls"""
+        """Update visualization controls to include heatmap option"""
         try:
             print("Creating control frame...")
             control_frame = ttk.Frame(parent)
@@ -758,9 +791,9 @@ class ValueDimensionPCAGui:
             ttk.Label(plot_controls, text="Point Size:").pack(side="left", padx=5)
             ttk.Entry(plot_controls, textvariable=self.point_size, width=4).pack(side="left")
             
-            # Plot type selection (simplified)
+            # Update plot type selection
             self.plot_type = tk.StringVar(value="scatter")
-            plot_types = ["scatter", "matrix"]
+            plot_types = ["scatter", "matrix", "heatmap"]  # Added heatmap option
             for plot_type in plot_types:
                 ttk.Radiobutton(
                     plot_controls,
@@ -777,7 +810,7 @@ class ValueDimensionPCAGui:
             raise
     
     def update_plot(self, pca):
-        """Update the visualization based on current settings"""
+        """Update visualization based on current settings"""
         try:
             plot_type = self.plot_type.get()
             
@@ -787,6 +820,8 @@ class ValueDimensionPCAGui:
             
             if plot_type == "matrix":
                 self.create_matrix_plot(pca)
+            elif plot_type == "heatmap":
+                self.create_heatmap_plot(pca)
             else:  # scatter
                 pc1 = int(self.pc_x.get()) - 1
                 pc2 = int(self.pc_y.get()) - 1
@@ -957,6 +992,143 @@ class ValueDimensionPCAGui:
             print(f"Error updating ratings type: {str(e)}")
             messagebox.showerror("Error", f"Failed to update ratings type: {str(e)}")
             self.ratings_type.set("original")
+
+    def create_heatmap_plot(self, pca):
+        """Create interactive heatmap of LDA clustering results"""
+        try:
+            print("Creating heatmap plot...")
+            
+            # Perform clustering if not already done
+            if not hasattr(pca, 'cluster_labels'):
+                print("Performing clustering...")
+                pca.perform_clustering()
+            
+            # Create the heatmap data
+            print("Creating heatmap data...")
+            unique_clusters = np.unique(pca.cluster_labels.astype(int))
+            n_components = min(12, pca.pca.components_.shape[0])  # Limit to 12 components
+            
+            # Initialize cluster data array
+            cluster_data = np.zeros((len(unique_clusters), n_components))
+            
+            # Calculate mean for each cluster
+            for i, cluster in enumerate(unique_clusters):
+                mask = pca.cluster_labels.astype(int) == cluster
+                cluster_prompts = pca.pca_ratings[mask, :n_components]  # Limit to n_components
+                cluster_data[i] = np.mean(cluster_prompts, axis=0)
+            
+            print(f"Cluster data shape: {cluster_data.shape}")
+            
+            # Create DataFrame for heatmap
+            cluster_df = pd.DataFrame(
+                cluster_data,
+                columns=[f"PC{i+1}" for i in range(n_components)],
+                index=[f"Cluster {i+1}" for i in range(len(unique_clusters))]
+            )
+            
+            print("Creating plotly figure...")
+            # Create plotly heatmap
+            fig = go.Figure(data=go.Heatmap(
+                z=cluster_df.values,
+                x=cluster_df.columns,
+                y=cluster_df.index,
+                colorscale='RdBu',
+                zmid=0,
+                text=np.round(cluster_df.values, 3),
+                texttemplate='%{text}',
+                textfont={"size": 10},
+                hoverongaps=False,
+                hovertemplate='Cluster: %{y}<br>Component: %{x}<br>Value: %{z:.3f}<extra></extra>'
+            ))
+            
+            # Update layout
+            fig.update_layout(
+                title='Cluster Heatmap of PCA Components',
+                height=600,
+                width=800,
+                xaxis_title='Principal Components',
+                yaxis_title='Clusters',
+                template='plotly_white'
+            )
+            
+            # Generate HTML
+            html_path = "pca_heatmap.html"
+            print(f"Saving heatmap to: {html_path}")
+            pyo.plot(fig, filename=html_path, auto_open=False)
+            
+            # Create instructions and button in GUI
+            instruction_label = ttk.Label(
+                self.fig_frame,
+                text="The interactive heatmap has been generated.",
+                font=('TkDefaultFont', 10, 'bold')
+            )
+            instruction_label.pack(pady=(20,5))
+            
+            # Add cluster information
+            print("Adding cluster information...")
+            cluster_info = self.create_cluster_info(pca)
+            cluster_info.pack(pady=5)
+            
+            open_button = ttk.Button(
+                self.fig_frame,
+                text="Open Heatmap in Browser",
+                command=lambda: webbrowser.open(html_path)
+            )
+            open_button.pack(pady=(5,20))
+            
+            print("Heatmap created successfully")
+            
+        except Exception as e:
+            print(f"Error creating heatmap: {str(e)}")
+            print("Debug information:")
+            print(f"- Cluster labels shape: {pca.cluster_labels.shape if hasattr(pca, 'cluster_labels') else 'No labels'}")
+            print(f"- PCA ratings shape: {pca.pca_ratings.shape if hasattr(pca, 'pca_ratings') else 'No ratings'}")
+            print(f"- Number of components: {pca.pca.components_.shape if hasattr(pca, 'pca') else 'No components'}")
+            raise
+
+    def create_cluster_info(self, pca):
+        """Create text widget with cluster information"""
+        try:
+            print("Creating cluster information panel...")
+            info_frame = ttk.LabelFrame(self.fig_frame, text="Cluster Information", padding=10)
+            
+            text_widget = tk.Text(info_frame, height=6, width=50)
+            text_widget.pack(padx=5, pady=5)
+            
+            # Convert cluster labels to integers and get unique clusters
+            cluster_labels = pca.cluster_labels.astype(int)
+            unique_clusters = sorted(np.unique(cluster_labels))
+            
+            print(f"Processing {len(unique_clusters)} clusters...")
+            
+            # Add cluster information
+            for cluster in unique_clusters:
+                # Create boolean mask for current cluster
+                cluster_mask = cluster_labels == cluster
+                
+                # Get prompts for current cluster
+                cluster_prompts = []
+                for idx, is_in_cluster in enumerate(cluster_mask):
+                    if is_in_cluster:
+                        prompt = list(pca.prompts.values())[idx]
+                        cluster_prompts.append(prompt)
+                
+                # Write cluster information
+                text_widget.insert(tk.END, f"\nCluster {cluster + 1} ({len(cluster_prompts)} prompts):\n")
+                sample_prompts = cluster_prompts[:3] if len(cluster_prompts) > 3 else cluster_prompts
+                text_widget.insert(tk.END, f"Sample prompts: {', '.join(sample_prompts)}...\n")
+            
+            text_widget.config(state='disabled')
+            print("Cluster information panel created successfully")
+            return info_frame
+            
+        except Exception as e:
+            print(f"Error creating cluster info: {str(e)}")
+            print("Debug information:")
+            print(f"- Cluster labels type: {type(pca.cluster_labels)}")
+            print(f"- Cluster labels shape: {pca.cluster_labels.shape}")
+            print(f"- Number of prompts: {len(pca.prompts)}")
+            raise
 
 # If you want to run directly from this file
 if __name__ == "__main__":
