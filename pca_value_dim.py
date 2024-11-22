@@ -156,36 +156,20 @@ class ValueDimensionPCA:
                     # Remove all non-numeric columns
                     numeric_df = df.select_dtypes(include=['int64', 'float64'])
                     print(f"Shape after removing non-numeric columns: {numeric_df.shape}")
-                    
-                    # Verify numeric data is valid
-                    if numeric_df.empty:
-                        raise ValueError("No numeric data found after removing text columns")
-                    if numeric_df.isnull().any().any():
-                        print("Warning: Found NaN values in numeric data")
-                    
+                    print(f"Numeric columns: {numeric_df.columns.tolist()}")  # Debug print
                     ratings_dfs.append(numeric_df)
                 else:
                     print("Warning: No 'Prompt' column found")
                     ratings_dfs.append(df)
-            
-            # Load dimensions files
-            print("\nLoading dimensions files...")
-            dims_dfs = []
-            for path in dims_paths:
-                print(f"Reading dimensions file: {path}")
-                df = pd.read_excel(path)
-                print(f"Dimensions shape: {df.shape}")
-                print(f"Dimensions columns: {df.columns.tolist()}")
-                dims_dfs.append(df)
             
             # Process validated data
             print("\nProcessing validated data...")
             self.ratings_data = pd.concat(ratings_dfs, axis=1)
             print(f"Final ratings data shape: {self.ratings_data.shape}")
             
-            self.value_dims = pd.concat(dims_dfs, axis=0)
-            print(f"Final dimensions data shape: {self.value_dims.shape}")
-            print(f"Dimensions columns: {self.value_dims.columns.tolist()}")
+            # Store original dimension names
+            self.original_dims = self.ratings_data.columns.tolist()
+            print(f"Stored original dimensions: {self.original_dims}")  # Debug print
             
             # Initialize current_ratings
             self.current_ratings = self.ratings_data.copy()
@@ -204,39 +188,28 @@ class ValueDimensionPCA:
         """Perform PCA on the current ratings data"""
         try:
             print("\nDEBUG: Starting PCA process")
-            print(f"Current ratings type: {type(self.current_ratings)}")
-            if self.current_ratings is None:
-                print("ERROR: current_ratings is None")
-                return False
-            
-            print(f"Data shape: {self.current_ratings.shape}")
-            print("Sample of data:")
-            print(self.current_ratings.head())
-            print("\nChecking for NaN values:", self.current_ratings.isnull().sum().sum())
+            print(f"Original dimensions: {self.original_dims}")  # Debug print
             
             # Standardize the data
             scaler = StandardScaler()
-            print("\nAttempting to scale data...")
             scaled_data = scaler.fit_transform(self.current_ratings)
-            print("Data scaled successfully")
             
             # Perform PCA
-            print("\nInitializing PCA...")
             self.pca = PCA()
             self.pca_ratings = self.pca.fit_transform(scaled_data)
-            print("PCA completed successfully")
             
             # Store PCA results
             self.explained_variance_ratio_ = self.pca.explained_variance_ratio_
             self.components_ = self.pca.components_
             
+            print("PCA completed successfully")
+            print(f"Components shape: {self.components_.shape}")
+            print(f"Number of original dimensions: {len(self.original_dims)}")
+            
             return True
             
         except Exception as e:
-            import traceback
-            print(f"\nError performing PCA: {str(e)}")
-            print("Full traceback:")
-            print(traceback.format_exc())
+            print(f"Error performing PCA: {str(e)}")
             return False
 
     def get_prompt_for_component(self, component_index: int, n_top: int = 5) -> List[Tuple[str, float]]:
@@ -466,8 +439,27 @@ class ValueDimensionPCAGui:
                 messagebox.showerror("Error", message)
                 return False
 
+            # Load dimensions data first
+            print("\nLoading dimensions data...")
+            dims_dfs = []
+            for path in self.dims_paths:
+                print(f"Reading dimensions file: {path}")
+                df = pd.read_excel(path)
+                print(f"Dimensions shape: {df.shape}")
+                print(f"Dimensions columns: {df.columns.tolist()}")
+                dims_dfs.append(df)
+            
+            # Concatenate dimensions data
+            self.pca_instance.value_dims = pd.concat(dims_dfs, axis=0)
+            print(f"Combined dimensions shape: {self.pca_instance.value_dims.shape}")
+
             # Calculate cosine similarities
             print("Calculating cosine similarities...")
+            if 'value dimensions' not in self.pca_instance.value_dims.columns:
+                print("Available columns:", self.pca_instance.value_dims.columns.tolist())
+                messagebox.showerror("Error", "Could not find 'value dimensions' column in dimensions file")
+                return False
+            
             success = self.pca_instance.calculate_cosine_similarity(
                 self.pca_instance.prompts,
                 self.pca_instance.value_dims['value dimensions']
@@ -495,6 +487,10 @@ class ValueDimensionPCAGui:
             
         except Exception as e:
             print(f"Error in data preparation: {str(e)}")
+            print("Debug information:")
+            print(f"- Paths available: {bool(self.dims_paths)}")
+            if hasattr(self.pca_instance, 'value_dims'):
+                print(f"- Value dims columns: {self.pca_instance.value_dims.columns.tolist()}")
             messagebox.showerror("Error", f"Failed to prepare data: {str(e)}")
             return False
 
@@ -522,107 +518,249 @@ class ValueDimensionPCAGui:
             messagebox.showerror("Error", f"Error processing files: {str(e)}")
     
     def show_visualization(self, pca):
-        """Show PCA visualization"""
+        """Modified show_visualization to include summary panel"""
         try:
             print("Creating visualization window...")
             if not hasattr(self, 'viz_window'):
                 self.viz_window = tk.Toplevel(self.root)
                 self.viz_window.title("PCA Visualization")
             
-            print("Creating visualization controls...")
-            self.create_visualization_controls(pca)
+            # Store PCA instance
+            print("Storing PCA instance...")
+            self.pca_instance = pca
             
-            print("Initial plot update...")
-            self.update_plot(pca)
+            # Create main container
+            main_frame = ttk.Frame(self.viz_window)
+            main_frame.pack(fill="both", expand=True)
+            
+            # Create controls and panels
+            print("Creating UI elements...")
+            self.create_visualization_controls(main_frame)
+            self.create_summary_panel(main_frame)
+            
+            # Create figure frame
+            print("Creating figure frame...")
+            self.fig_frame = ttk.Frame(main_frame)
+            self.fig_frame.pack(fill="both", expand=True, pady=5)
+            
+            # Update displays
+            print("Updating displays...")
+            self.update_summary()
+            self.update_plot(self.pca_instance)
+            
+            print("Visualization setup complete")
             
         except Exception as e:
             print(f"Error in show_visualization: {str(e)}")
-            raise  # Re-raise the exception to be caught by proceed()
+            print(f"Debug info:")
+            print(f"- PCA instance available: {hasattr(self, 'pca_instance')}")
+            print(f"- Plot controls initialized: {hasattr(self, 'pc_x') and hasattr(self, 'pc_y') and hasattr(self, 'plot_type')}")
+            raise
     
-    def create_visualization_controls(self, pca):
-        """Create visualization controls including ratings toggle"""
-        control_frame = ttk.Frame(self.viz_window)
-        control_frame.pack(fill="x", padx=10, pady=5)
+    def create_summary_panel(self, parent):
+        """Create PCA results summary panel"""
+        summary_frame = ttk.LabelFrame(parent, text="PCA Summary", padding="10")
+        summary_frame.pack(fill="x", padx=10, pady=5)
+
+        # Threshold selector
+        threshold_frame = ttk.Frame(summary_frame)
+        threshold_frame.pack(fill="x", pady=5)
+        ttk.Label(threshold_frame, text="Variance explained threshold (%):").pack(side="left")
+        self.variance_threshold = tk.StringVar(value="80")
+        threshold_entry = ttk.Entry(threshold_frame, textvariable=self.variance_threshold, width=5)
+        threshold_entry.pack(side="left", padx=5)
+        ttk.Button(threshold_frame, text="Update", command=self.update_summary).pack(side="left", padx=5)
+
+        # Create text widget for summary
+        self.summary_text = tk.Text(summary_frame, height=15, width=60)
+        self.summary_text.pack(fill="both", expand=True)
         
-        # Ratings type toggle
-        ratings_frame = ttk.LabelFrame(control_frame, text="Ratings Type", padding="5")
-        ratings_frame.pack(fill="x", pady=5)
-        
-        ttk.Radiobutton(
-            ratings_frame,
-            text="Original Ratings",
-            variable=self.ratings_type,
-            value="original",
-            command=self.update_ratings_type
-        ).pack(side="left", padx=5)
-        
-        ttk.Radiobutton(
-            ratings_frame,
-            text="Cosine Similarity Scores",
-            variable=self.ratings_type,
-            value="cosine",
-            command=self.update_ratings_type
-        ).pack(side="left", padx=5)
-        
-        # PC Selection
-        pc_frame = ttk.LabelFrame(control_frame, text="Principal Components", padding="5")
-        pc_frame.pack(fill="x", pady=5)
-        
-        self.pc_x = tk.StringVar(value="1")
-        self.pc_y = tk.StringVar(value="2")
-        
-        ttk.Label(pc_frame, text="X-axis PC:").pack()
-        ttk.Spinbox(pc_frame, from_=1, to=len(pca.components_), textvariable=self.pc_x).pack()
-        
-        ttk.Label(pc_frame, text="Y-axis PC:").pack()
-        ttk.Spinbox(pc_frame, from_=1, to=len(pca.components_), textvariable=self.pc_y).pack()
-        
-        # Visualization Type
-        viz_frame = ttk.LabelFrame(control_frame, text="Plot Type", padding="5")
-        viz_frame.pack(fill="x", pady=5)
-        
-        self.plot_type = tk.StringVar(value="scatter")
-        ttk.Radiobutton(viz_frame, text="Scatter Plot", value="scatter", 
-                       variable=self.plot_type).pack()
-        ttk.Radiobutton(viz_frame, text="Loading Plot", value="loading", 
-                       variable=self.plot_type).pack()
-        ttk.Radiobutton(viz_frame, text="Biplot", value="biplot", 
-                       variable=self.plot_type).pack()
-        
-        # Display Options
-        options_frame = ttk.LabelFrame(control_frame, text="Display Options", padding="5")
-        options_frame.pack(fill="x", pady=5)
-        
-        self.show_labels = tk.BooleanVar(value=True)
-        self.show_vectors = tk.BooleanVar(value=True)
-        self.show_ellipses = tk.BooleanVar(value=False)
-        self.show_legend = tk.BooleanVar(value=True)
-        
-        ttk.Checkbutton(options_frame, text="Show Labels", 
-                        variable=self.show_labels).pack()
-        ttk.Checkbutton(options_frame, text="Show Loading Vectors", 
-                        variable=self.show_vectors).pack()
-        ttk.Checkbutton(options_frame, text="Show Confidence Ellipses", 
-                        variable=self.show_ellipses).pack()
-        ttk.Checkbutton(options_frame, text="Show Legend", 
-                        variable=self.show_legend).pack()
-        
-        # Customization Options
-        custom_frame = ttk.LabelFrame(control_frame, text="Customization", padding="5")
-        custom_frame.pack(fill="x", pady=5)
-        
-        self.point_size = tk.StringVar(value="8")
-        self.vector_scale = tk.StringVar(value="1.0")
-        
-        ttk.Label(custom_frame, text="Point Size:").pack()
-        ttk.Entry(custom_frame, textvariable=self.point_size).pack()
-        
-        ttk.Label(custom_frame, text="Vector Scale:").pack()
-        ttk.Entry(custom_frame, textvariable=self.vector_scale).pack()
-        
-        # Update Button
-        ttk.Button(control_frame, text="Update Plot", 
-                   command=lambda: self.update_plot(pca)).pack(pady=10)
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(summary_frame, orient="vertical", command=self.summary_text.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.summary_text.configure(yscrollcommand=scrollbar.set)
+
+    def update_summary(self):
+        """Update PCA summary with current results"""
+        try:
+            print("\nDEBUG: Starting summary update")
+            
+            # Check if PCA instance exists
+            if not hasattr(self, 'pca_instance'):
+                print("No PCA instance found")
+                return
+            print("PCA instance found")
+            
+            # Check if PCA object exists
+            if not hasattr(self.pca_instance, 'pca'):
+                print("No PCA object found in instance")
+                return
+            print("PCA object found")
+            
+            # Debug print for original_dims
+            print(f"Original dims type: {type(self.pca_instance.original_dims)}")
+            print(f"Original dims value: {self.pca_instance.original_dims}")
+            
+            # Clear existing text
+            if not hasattr(self, 'summary_text'):
+                print("No summary_text widget found")
+                return
+            self.summary_text.delete(1.0, tk.END)
+            
+            # Get threshold (with error checking)
+            try:
+                threshold = float(self.variance_threshold.get()) / 100
+            except (ValueError, AttributeError):
+                threshold = 0.8  # default to 80%
+            print(f"Using threshold: {threshold}")
+
+            # Data preprocessing info
+            self.summary_text.insert(tk.END, "Data Preprocessing:\n", "heading")
+            self.summary_text.insert(tk.END, "- Standardization: StandardScaler\n")
+            
+            # Debug print for components
+            print(f"Components type: {type(self.pca_instance.pca.components_)}")
+            print(f"Components shape: {self.pca_instance.pca.components_.shape}")
+            
+            # Debug print for explained variance
+            print(f"Explained variance type: {type(self.pca_instance.pca.explained_variance_ratio_)}")
+            print(f"Explained variance shape: {self.pca_instance.pca.explained_variance_ratio_.shape}")
+            
+            # Add input dimensions info with explicit type checking
+            if hasattr(self.pca_instance, 'original_dims'):
+                dims = self.pca_instance.original_dims
+                if dims is not None:
+                    try:
+                        n_dims = len(dims)
+                        self.summary_text.insert(tk.END, f"- Input dimensions: {n_dims}\n")
+                    except TypeError:
+                        print(f"Could not get length of original_dims: {dims}")
+            
+            self.summary_text.insert(tk.END, 
+                f"- Data type: {'Cosine Similarity' if self.ratings_type.get() == 'cosine' else 'Original Ratings'}\n\n")
+
+            # Check for explained variance ratios
+            if hasattr(self.pca_instance.pca, 'explained_variance_ratio_'):
+                print("Adding explained variance information")
+                self.summary_text.insert(tk.END, "Explained Variance by Component:\n", "heading")
+                var_ratios = self.pca_instance.pca.explained_variance_ratio_
+                cumulative = np.cumsum(var_ratios)
+                
+                for i, (var, cum) in enumerate(zip(var_ratios, cumulative), 1):
+                    self.summary_text.insert(tk.END, 
+                        f"PC{i}: {var:.3f} ({cum:.3f} cumulative)\n")
+
+                # Components needed for threshold
+                n_components = np.sum(cumulative <= threshold) + 1
+                self.summary_text.insert(tk.END, 
+                    f"\nComponents needed for {threshold*100}% variance: {n_components}\n\n")
+
+            # Check for components/loadings
+            if hasattr(self.pca_instance.pca, 'components_'):
+                print("Adding component loadings information")
+                self.summary_text.insert(tk.END, "Top Component Loadings:\n", "heading")
+                loadings = self.pca_instance.pca.components_
+                
+                if hasattr(self.pca_instance, 'original_dims'):
+                    # For each component, show top contributing dimensions
+                    for i in range(min(3, len(loadings))):  # Show first 3 components
+                        self.summary_text.insert(tk.END, f"\nPrincipal Component {i+1}:\n")
+                        # Get indices of top absolute loadings
+                        top_indices = np.abs(loadings[i]).argsort()[-5:][::-1]  # Top 5
+                        for idx in top_indices:
+                            dim_name = self.pca_instance.original_dims[idx]
+                            loading = loadings[i][idx]
+                            self.summary_text.insert(tk.END, 
+                                f"  {dim_name}: {loading:.3f}\n")
+
+            # Software info
+            self.summary_text.insert(tk.END, "\nSoftware Information:\n", "heading")
+            self.summary_text.insert(tk.END, "- scikit-learn PCA\n")
+            self.summary_text.insert(tk.END, "- pandas DataFrame\n")
+            self.summary_text.insert(tk.END, "- numpy arrays\n")
+
+            # Apply tags for formatting
+            self.summary_text.tag_configure("heading", font=("TkDefaultFont", 10, "bold"))
+            
+            print("Summary update completed successfully")
+            
+        except Exception as e:
+            print(f"Error updating summary: {str(e)}")
+            print("Debug information:")
+            print(f"- PCA instance exists: {hasattr(self, 'pca_instance')}")
+            if hasattr(self, 'pca_instance'):
+                print(f"- PCA object exists: {hasattr(self.pca_instance, 'pca')}")
+                if hasattr(self.pca_instance, 'pca'):
+                    print(f"- Components exist: {hasattr(self.pca_instance.pca, 'components_')}")
+                    print(f"- Original dims exist: {hasattr(self.pca_instance, 'original_dims')}")
+                    if hasattr(self.pca_instance, 'original_dims'):
+                        print(f"- Original dims value: {self.pca_instance.original_dims}")
+            messagebox.showerror("Error", f"Failed to update summary: {str(e)}")
+
+    def create_visualization_controls(self, parent):
+        """Create visualization controls including ratings toggle and plot controls"""
+        try:
+            print("Creating control frame...")
+            control_frame = ttk.Frame(parent)
+            control_frame.pack(fill="x", padx=10, pady=5)
+            
+            # Ratings type toggle
+            print("Creating ratings toggle...")
+            ratings_frame = ttk.LabelFrame(control_frame, text="Ratings Type", padding="5")
+            ratings_frame.pack(fill="x", pady=5)
+            
+            ttk.Radiobutton(
+                ratings_frame,
+                text="Original Ratings",
+                variable=self.ratings_type,
+                value="original",
+                command=self.update_ratings_type
+            ).pack(side="left", padx=5)
+            
+            ttk.Radiobutton(
+                ratings_frame,
+                text="Cosine Similarity Scores",
+                variable=self.ratings_type,
+                value="cosine",
+                command=self.update_ratings_type
+            ).pack(side="left", padx=5)
+            
+            # Plot controls
+            print("Creating plot controls...")
+            plot_controls = ttk.LabelFrame(control_frame, text="Plot Controls", padding="5")
+            plot_controls.pack(fill="x", pady=5)
+            
+            # PC selection
+            self.pc_x = tk.StringVar(value="1")
+            self.pc_y = tk.StringVar(value="2")
+            
+            ttk.Label(plot_controls, text="PC X:").pack(side="left", padx=5)
+            ttk.Entry(plot_controls, textvariable=self.pc_x, width=3).pack(side="left")
+            ttk.Label(plot_controls, text="PC Y:").pack(side="left", padx=5)
+            ttk.Entry(plot_controls, textvariable=self.pc_y, width=3).pack(side="left")
+            
+            # Point size control
+            self.point_size = tk.StringVar(value="50")  # Default point size
+            ttk.Label(plot_controls, text="Point Size:").pack(side="left", padx=5)
+            ttk.Entry(plot_controls, textvariable=self.point_size, width=4).pack(side="left")
+            
+            # Plot type selection
+            self.plot_type = tk.StringVar(value="scatter")
+            plot_types = ["scatter", "loading", "biplot"]
+            for plot_type in plot_types:
+                ttk.Radiobutton(
+                    plot_controls,
+                    text=plot_type.capitalize(),
+                    variable=self.plot_type,
+                    value=plot_type,
+                    command=lambda: self.update_plot(self.pca_instance)
+                ).pack(side="left", padx=5)
+            
+            print("Control frame created successfully")
+            
+        except Exception as e:
+            print(f"Error creating visualization controls: {str(e)}")
+            raise
     
     def update_plot(self, pca):
         """Update the visualization based on current settings"""
@@ -647,64 +785,46 @@ class ValueDimensionPCAGui:
         self.root.mainloop()
 
     def create_scatter_plot(self, pca, pc1, pc2):
-        """Create scatter plot of PCA scores"""
+        """Create scatter plot of PCA results"""
         try:
-            # Clear existing plot frame if it exists
-            if hasattr(self, 'plot_frame'):
-                self.plot_frame.destroy()
-            
-            # Create new plot frame
-            self.plot_frame = ttk.Frame(self.root)
-            self.plot_frame.pack(side="right", fill="both", expand=True)
-            
-            # Create figure
-            fig = Figure(figsize=(10, 8))
-            ax = fig.add_subplot(111)
-            
-            # Plot scores
-            scatter = ax.scatter(
+            # Get point size with error handling
+            try:
+                point_size = float(self.point_size.get())
+            except (ValueError, AttributeError):
+                point_size = 50  # default size if there's an error
+                
+            # Create the scatter plot
+            plt.figure(figsize=(10, 8))
+            plt.scatter(
                 pca.pca_ratings[:, pc1],
                 pca.pca_ratings[:, pc2],
-                s=float(self.point_size.get()),
+                s=point_size,
                 alpha=0.6
             )
             
-            # Add labels if requested
-            if self.show_labels.get():
-                for i, txt in enumerate(pca.ratings_data.index):
-                    ax.annotate(
-                        txt,
-                        (pca.pca_ratings[i, pc1], pca.pca_ratings[i, pc2]),
-                        xytext=(5, 5),
-                        textcoords='offset points',
-                        fontsize=8
-                    )
+            # Add labels
+            plt.xlabel(f'Principal Component {pc1 + 1}')
+            plt.ylabel(f'Principal Component {pc2 + 1}')
+            plt.title('PCA Results')
             
-            # Add confidence ellipses if requested
-            if self.show_ellipses.get():
-                self.add_confidence_ellipses(ax, pca, pc1, pc2)
+            # Add grid
+            plt.grid(True, linestyle='--', alpha=0.7)
             
-            # Set labels and title
-            var_exp = pca.explained_variance_ratio_
-            ax.set_xlabel(f'PC{pc1+1} ({var_exp[pc1]:.1%} explained variance)')
-            ax.set_ylabel(f'PC{pc2+1} ({var_exp[pc2]:.1%} explained variance)')
-            ax.set_title('PCA Score Plot')
+            # Show plot
+            plt.tight_layout()
             
-            # Add legend if requested
-            if self.show_legend.get():
-                ax.legend()
+            # If we have a previous plot, clear it
+            if hasattr(self, 'canvas'):
+                self.canvas.get_tk_widget().destroy()
             
-            # Add plot to GUI
-            canvas = FigureCanvasTkAgg(fig, master=self.plot_frame)
-            canvas.draw()
-            canvas.get_tk_widget().pack(fill="both", expand=True)
-            
-            # Add toolbar
-            toolbar = NavigationToolbar2Tk(canvas, self.plot_frame)
-            toolbar.update()
+            # Create new canvas
+            self.canvas = FigureCanvasTkAgg(plt.gcf(), master=self.fig_frame)
+            self.canvas.draw()
+            self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
             
         except Exception as e:
-            messagebox.showerror("Error", f"Error creating scatter plot: {str(e)}")
+            print(f"Error creating scatter plot: {str(e)}")
+            raise
 
     def create_loading_plot(self, pca, pc1, pc2):
         """Create loading plot"""
