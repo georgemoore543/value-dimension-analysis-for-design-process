@@ -205,11 +205,18 @@ class ValueDimensionPCA:
         """Perform PCA on the current ratings data"""
         try:
             print("\nDEBUG: Starting PCA process")
-            print(f"Original dimensions: {self.original_dims}")  # Debug print
+            
+            # Filter out '#' columns BEFORE storing original dimensions
+            valid_columns = [col for col in self.current_ratings.columns if col != '#']
+            filtered_data = self.current_ratings[valid_columns]
+            
+            # Store only valid dimensions
+            self.original_dims = valid_columns
+            print(f"Original dimensions (filtered): {self.original_dims}")
             
             # Standardize the data
             scaler = StandardScaler()
-            scaled_data = scaler.fit_transform(self.current_ratings)
+            scaled_data = scaler.fit_transform(filtered_data)
             
             # Perform PCA
             self.pca = PCA()
@@ -219,14 +226,52 @@ class ValueDimensionPCA:
             self.explained_variance_ratio_ = self.pca.explained_variance_ratio_
             self.components_ = self.pca.components_
             
-            print("PCA completed successfully")
-            print(f"Components shape: {self.components_.shape}")
-            print(f"Number of original dimensions: {len(self.original_dims)}")
+            print("\nDEBUG: Calculating contributions")
+            
+            # Get loadings and explained variance
+            loadings = self.components_.T
+            exp_var = self.explained_variance_ratio_
+            
+            # Calculate importance scores for each variable
+            importance_scores = np.zeros(len(valid_columns))
+            
+            for i in range(len(valid_columns)):
+                # Weight the absolute loadings by explained variance
+                weighted_loadings = np.abs(loadings[i, :]) * exp_var
+                # Take the sum of the top 3 contributions
+                top_contributions = np.sort(weighted_loadings)[-3:]
+                importance_scores[i] = np.sum(top_contributions)
+                
+                print(f"\nDEBUG: {valid_columns[i]}:")
+                print(f"Top 3 weighted loadings: {top_contributions}")
+                print(f"Importance score: {importance_scores[i]:.4f}")
+            
+            # Convert to percentages
+            total_importance = np.sum(importance_scores)
+            variance_percentages = (importance_scores / total_importance) * 100
+            
+            self.variance_contributions = pd.Series(
+                variance_percentages,
+                index=valid_columns
+            )
+            
+            print("\nDEBUG: Final variance contributions:")
+            sorted_contributions = self.variance_contributions.sort_values(ascending=False)
+            for dim, contrib in sorted_contributions.items():
+                print(f"{dim}: {contrib:.2f}%")
+            
+            print("\nDEBUG: Validation:")
+            print(f"Sum of contributions: {self.variance_contributions.sum():.2f}%")
+            print(f"Min contribution: {self.variance_contributions.min():.2f}%")
+            print(f"Max contribution: {self.variance_contributions.max():.2f}%")
             
             return True
             
         except Exception as e:
             print(f"Error performing PCA: {str(e)}")
+            print("Full error details:")
+            import traceback
+            traceback.print_exc()
             return False
 
     def get_prompt_for_component(self, component_index: int, n_top: int = 5) -> List[Tuple[str, float]]:
@@ -343,6 +388,19 @@ class ValueDimensionPCA:
         except Exception as e:
             print(f"Error in clustering: {str(e)}")
             return False
+
+    def calculate_dimension_variance(self):
+        """Return the pre-calculated variance contributions"""
+        try:
+            if hasattr(self, 'variance_contributions'):
+                return self.variance_contributions
+            else:
+                print("DEBUG: Variance contributions not yet calculated")
+                return None
+            
+        except Exception as e:
+            print("DEBUG: Error accessing variance contributions:", str(e))
+            return None
 
 # Then, the GUI class
 class ValueDimensionPCAGui:
@@ -664,6 +722,16 @@ class ValueDimensionPCAGui:
             # Data preprocessing info
             self.summary_text.insert(tk.END, "Data Preprocessing:\n", "heading")
             self.summary_text.insert(tk.END, "- Standardization: StandardScaler\n")
+            
+            # Add dimension variance contributions
+            variance_contributions = self.pca_instance.calculate_dimension_variance()
+            if variance_contributions is not None:
+                self.summary_text.insert(tk.END, "\nVariance Contribution by Dimension:\n", "heading")
+                # Sort dimensions by contribution
+                sorted_contributions = variance_contributions.sort_values(ascending=False)
+                for dim, contrib in sorted_contributions.items():
+                    self.summary_text.insert(tk.END, f"- {dim}: {contrib:.2f}%\n")
+                self.summary_text.insert(tk.END, "\n")
             
             # Debug print for components
             print(f"Components type: {type(self.pca_instance.pca.components_)}")
