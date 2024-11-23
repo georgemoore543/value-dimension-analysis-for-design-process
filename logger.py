@@ -4,10 +4,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder for datetime objects"""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
+
 class PCALogger:
     """Logger for PCA name generation process"""
     
     def __init__(self, log_dir: Optional[Path] = None):
+        self.logger = logging.getLogger(__name__)
         self.log_dir = log_dir or Path.home() / '.pca_analyzer' / 'logs'
         self.log_dir.mkdir(parents=True, exist_ok=True)
         
@@ -28,15 +36,19 @@ class PCALogger:
         )
         
         # Configure logger
-        self.logger = logging.getLogger('pca_analyzer')
         self.logger.setLevel(logging.DEBUG)
         self.logger.addHandler(self.file_handler)
         self.logger.addHandler(self.console_handler)
 
     def log_api_call(self, pc_data: Dict[str, Any], response: Dict[str, Any]):
-        """Log API call details"""
-        self.logger.info(f"Generated name for PC {pc_data['pc_num']}")
-        self.logger.debug(f"API Response: {json.dumps(response, indent=2)}")
+        """Log API call details with datetime handling"""
+        try:
+            self.logger.info(f"Generated name for PC {pc_data['pc_num']}")
+            self.logger.debug(
+                f"API Response: {json.dumps(response, indent=2, cls=DateTimeEncoder)}"
+            )
+        except Exception as e:
+            self.logger.error(f"Error logging API call: {str(e)}")
 
     def log_error(self, error: Exception, context: Dict[str, Any]):
         """Log error details"""

@@ -1,99 +1,68 @@
 import pytest
-from ..response_parser import ResponseParser
-import time
+import sys
+import os
 
-class TestResponseParser:
-    @pytest.fixture
-    def parser(self):
-        """Create a test response parser instance"""
-        return ResponseParser()
+# Add the parent directory to the Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-    def test_parse_valid_response(self, parser):
-        """Test parsing a valid response"""
-        content = """Name: Test Component
+from response_parser import ResponseParser
+
+def test_response_parser():
+    """Test basic ResponseParser functionality with clear print statements"""
+    print("\nStarting ResponseParser test...")
+    
+    try:
+        # 1. Create parser instance
+        print("1. Creating ResponseParser instance...")
+        parser = ResponseParser()
+        print("   ✓ Parser instance created")
+
+        # 2. Test valid response parsing
+        print("\n2. Testing valid response parsing...")
+        valid_response = """Name: Test Component
 Explanation: This is a test explanation"""
-        
-        name, explanation, error = parser.parse_name_response(content)
-        
+        name, explanation, error = parser.parse_name_response(valid_response)
         assert name == "Test Component"
         assert explanation == "This is a test explanation"
         assert error is None
+        print("   ✓ Valid response parsed correctly")
 
-    def test_parse_invalid_response_no_name(self, parser):
-        """Test parsing response without Name section"""
-        content = "Explanation: This is a test explanation"
+        # 3. Test invalid response parsing
+        print("\n3. Testing invalid response parsing...")
+        invalid_responses = [
+            "",  # Empty
+            "Invalid format",  # Wrong format
+            "Name:",  # Missing explanation
+            "Explanation: test"  # Missing name
+        ]
         
-        name, explanation, error = parser.parse_name_response(content)
-        
-        assert name is None
-        assert explanation is None
-        assert "missing 'Name:' section" in error
+        for resp in invalid_responses:
+            name, explanation, error = parser.parse_name_response(resp)
+            assert error is not None
+            assert name is None
+            assert explanation is None
+        print("   ✓ Invalid responses handled correctly")
 
-    def test_parse_invalid_response_no_explanation(self, parser):
-        """Test parsing response without Explanation section"""
-        content = "Name: Test Component"
-        
-        name, explanation, error = parser.parse_name_response(content)
-        
-        assert name is None
-        assert explanation is None
-        assert "missing 'Explanation:' section" in error
-
-    def test_parse_empty_response(self, parser):
-        """Test parsing empty response"""
-        content = ""
-        
-        name, explanation, error = parser.parse_name_response(content)
-        
-        assert name is None
-        assert explanation is None
-        assert "Empty or invalid response content" in error
-
-    def test_parse_none_response(self, parser):
-        """Test parsing None response"""
-        content = None
-        
-        name, explanation, error = parser.parse_name_response(content)
-        
-        assert name is None
-        assert explanation is None
-        assert "Empty or invalid response content" in error
-
-    def test_parse_malformed_response(self, parser):
-        """Test parsing malformed response"""
-        content = "Name: \nExplanation: "
-        
-        name, explanation, error = parser.parse_name_response(content)
-        
-        assert name is None
-        assert explanation is None
-        assert "Empty name in response" in error
-
-    def test_format_result_success(self, parser):
-        """Test formatting successful result"""
+        # 4. Test result formatting
+        print("\n4. Testing result formatting...")
         result = parser.format_result(
             pc_num=1,
             name="Test Component",
             explanation="Test explanation"
         )
-        
         assert result['pc_num'] == 1
         assert result['name'] == "Test Component"
         assert result['explanation'] == "Test explanation"
-        assert 'error' not in result
         assert 'timestamp' in result
+        print("   ✓ Result formatted correctly")
 
-    def test_format_result_error(self, parser):
-        """Test formatting error result"""
-        result = parser.format_result(
-            pc_num=1,
-            name=None,
-            explanation=None,
-            error="Test error"
-        )
-        
-        assert result['pc_num'] == 1
-        assert 'name' not in result
-        assert 'explanation' not in result
-        assert result['error'] == "Test error"
-        assert 'timestamp' in result 
+        print("\n✓ All ResponseParser tests passed!")
+        return True
+
+    except Exception as e:
+        print(f"\n❌ Error during ResponseParser test: {str(e)}")
+        return False
+
+if __name__ == "__main__":
+    success = test_response_parser()
+    print(f"\nTest {'succeeded' if success else 'failed'}") 

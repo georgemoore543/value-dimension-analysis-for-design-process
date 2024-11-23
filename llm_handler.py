@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from error_handler import with_error_handling
 from logger import PCALogger
+import json
 
 @dataclass
 class APIUsage:
@@ -28,6 +29,12 @@ class LLMHandlerError(Exception):
 class RateLimitExceeded(LLMHandlerError):
     """Raised when API rate limit is exceeded"""
     pass
+
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
 
 class LLMHandler:
     # Cost per 1k tokens (as of latest OpenAI pricing)
@@ -58,6 +65,8 @@ class LLMHandler:
         self.encoding = tiktoken.encoding_for_model(self.model)
 
         self.batch_size = 3  # Maximum concurrent requests
+
+        self.json_encoder = DateTimeEncoder()
 
     def _enforce_rate_limit(self):
         """Enforce rate limiting between API calls"""
@@ -150,7 +159,7 @@ class LLMHandler:
             return {}
 
     @with_error_handling
-    def generate_name(self, pc_data: Dict[str, Any], custom_prompt: str = None) -> Dict[str, Any]:
+    def generate_name(self, pc_data: Dict[str, Any], custom_prompt: Optional[str] = None) -> Dict[str, Any]:
         """Generate name for a PC with logging"""
         start_time = time.time()
         
@@ -191,7 +200,9 @@ class LLMHandler:
                 'timestamp': datetime.now()
             }
             
-            self.logger.log_api_call(pc_data, result)
+            self.logger.log_api_call(pc_data, json.loads(
+                json.dumps(result, cls=DateTimeEncoder)
+            ))
             self.logger.log_performance(start_time, time.time(), 1)
             
             return result

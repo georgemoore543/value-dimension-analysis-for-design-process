@@ -4,6 +4,7 @@ import time
 from openai import OpenAI, AsyncOpenAI
 from typing import Dict, Any
 import asyncio
+import os
 
 from config import Config
 from llm_handler import LLMHandler
@@ -223,3 +224,21 @@ class TestLLMAsyncIntegration:
             
             # Verify order preservation
             assert [result['pc_num'] for result in results] == [0, 1, 2] 
+
+def test_integration():
+    """Test full integration of all components"""
+    api_key = os.getenv('OPENAI_API_KEY')
+    if not api_key:
+        print("⚠️  No API key found. Please set OPENAI_API_KEY environment variable")
+        return False
+        
+    try:
+        # 1. Setup configuration
+        print("1. Setting up configuration...")
+        config = Config()
+        config.set('openai_api_key', api_key)  # Use the actual API key from environment
+        config.set('model', 'gpt-4')
+        print("   ✓ Configuration initialized")
+    except Exception as e:
+        print(f"Failed to initialize configuration: {e}")
+        return False 

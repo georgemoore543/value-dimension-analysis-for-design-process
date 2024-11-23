@@ -28,6 +28,7 @@ import webbrowser  # For opening the plot in browser if needed
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.cluster import KMeans
 import seaborn as sns
+from run_pca_naming import generate_pca_names
 
 print("File loaded, ValueDimensionPCA will be defined at:", __name__)
 
@@ -408,11 +409,16 @@ class ValueDimensionPCAGui:
     PCA_Class = ValueDimensionPCA
     
     def __init__(self):
+        
         self.root = tk.Tk()
         self.root.title("Value Dimension PCA Analysis")
         self.pca_instance = None
         self.ratings_type = tk.StringVar(value="original")
-        
+                
+        # Create button frame
+        self.button_frame = tk.Frame(self.root)
+        self.button_frame.pack(pady=5)
+
         # Initialize data structures
         self.ratings_paths = []
         self.dims_paths = []
@@ -422,6 +428,32 @@ class ValueDimensionPCAGui:
         # Create initial widgets
         self.create_initial_widgets()
         
+        # Create button frame (this should already exist in your code)
+        self.button_frame = tk.Frame(self.root)
+        self.button_frame.pack(pady=5)
+
+    def load_data(self):
+        """Handle data loading through the PCA instance"""
+        try:
+            # Initialize PCA instance if not already done
+            if self.pca_instance is None:
+                self.pca_instance = ValueDimensionPCA()
+            
+            # Call the PCA instance's load_data method with selected files
+            success, message = self.pca_instance.load_data(
+                self.ratings_paths, 
+                self.dims_paths
+            )
+            
+            if success:
+                messagebox.showinfo("Success", "Data loaded successfully")
+                self.run_button.config(state=tk.NORMAL)
+            else:
+                messagebox.showerror("Error", f"Failed to load data: {message}")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load data: {str(e)}")
+
     def create_initial_widgets(self):
         # File count frame
         count_frame = ttk.LabelFrame(self.root, text="Number of Files", padding="10")
@@ -902,6 +934,9 @@ class ValueDimensionPCAGui:
     def run(self):
         self.root.mainloop()
 
+
+    
+
     def create_scatter_plot(self, pca, pc1, pc2):
         """Create scatter plot of PCA results"""
         try:
@@ -1074,8 +1109,7 @@ class ValueDimensionPCAGui:
             # Create the heatmap data
             print("Creating heatmap data...")
             unique_clusters = np.unique(pca.cluster_labels.astype(int))
-            n_components = min(12, pca.pca.components_.shape[0])  # Limit to 12 components
-            
+            n_components = min(12, pca.pca.components_.shape[0])            
             # Initialize cluster data array
             cluster_data = np.zeros((len(unique_clusters), n_components))
             
@@ -1197,6 +1231,85 @@ class ValueDimensionPCAGui:
             print(f"- Cluster labels shape: {pca.cluster_labels.shape}")
             print(f"- Number of prompts: {len(pca.prompts)}")
             raise
+
+    def generate_component_names(self):
+        """New method to handle PCA name generation"""
+        try:
+            self.status_label.config(text="Generating component names...")
+            self.root.update()
+
+            results_df = generate_pca_names(
+                pca_results=self.pca_instance,
+                prompts_df=self.prompts,
+                n_components=self.n_components
+            )
+
+            if results_df is not None:
+                self.display_component_names(results_df)
+            else:
+                messagebox.showerror(
+                    "Error", 
+                    "Failed to generate component names"
+                )
+
+        except Exception as e:
+            messagebox.showerror(
+                "Error", 
+                f"Name generation failed: {str(e)}"
+            )
+        finally:
+            self.status_label.config(text="Ready")
+
+    def display_component_names(self, results_df):
+        """Display the generated names in the GUI"""
+        # Create or update results window
+        if not hasattr(self, 'results_window'):
+            self.results_window = tk.Toplevel(self.root)
+            self.results_window.title("PCA Component Names")
+        
+        # Clear existing content
+        for widget in self.results_window.winfo_children():
+            widget.destroy()
+        
+        # Create scrollable frame
+        canvas = tk.Canvas(self.results_window)
+        scrollbar = tk.Scrollbar(
+            self.results_window, 
+            orient="vertical", 
+            command=canvas.yview
+        )
+        scrollable_frame = tk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Display results
+        for _, row in results_df.iterrows():
+            frame = tk.Frame(scrollable_frame)
+            frame.pack(fill="x", padx=5, pady=5)
+            
+            tk.Label(
+                frame, 
+                text=f"PC {row['pc_num']}: {row['name']}", 
+                font=("Arial", 10, "bold")
+            ).pack(anchor="w")
+            
+            tk.Label(
+                frame, 
+                text=row['explanation'], 
+                wraplength=400
+            ).pack(anchor="w")
+            
+            tk.Frame(frame, height=1, bg="gray").pack(fill="x", pady=5)
+
+        # Pack scrollbar and canvas
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
 
 # If you want to run directly from this file
 if __name__ == "__main__":

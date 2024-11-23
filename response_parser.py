@@ -1,4 +1,6 @@
 import time
+from datetime import datetime
+from typing import Optional
 
 class ResponseParser:
     def parse_name_response(self, content):
@@ -23,16 +25,22 @@ class ResponseParser:
         except Exception:
             return None, None, "Failed to parse response"
 
-    def format_result(self, pc_num, name=None, explanation=None, error=None):
+    def format_result(self, pc_num: int, name: Optional[str] = None, 
+                     explanation: Optional[str] = None, error: Optional[str] = None) -> dict:
+        """Format the parsed response into a standardized result dictionary"""
         result = {
             'pc_num': pc_num,
-            'timestamp': time.time()
+            'timestamp': datetime.now().isoformat()  # Store as string instead of datetime object
         }
         
         if error:
             result['error'] = error
-        else:
-            result['name'] = name
-            result['explanation'] = explanation
+            return result
+        
+        if name and explanation:
+            result.update({
+                'name': name,
+                'explanation': explanation
+            })
             
         return result 
