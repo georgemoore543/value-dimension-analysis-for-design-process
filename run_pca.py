@@ -47,7 +47,7 @@ class PCAGui:
             # Get results from the name generation
             results_df = generate_pca_names(
                 pca_results=self.pca_results,  # Your PCA results
-                prompts_df=self.prompts_df,    # Your prompts DataFrame
+                prompts_df=self.pca_instance.prompts_df,    # Your prompts DataFrame
                 n_components=self.n_components # Number of components
             )
 

@@ -29,6 +29,8 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.cluster import KMeans
 import seaborn as sns
 from run_pca_naming import generate_pca_names
+from llm_handler import LLMHandler
+from response_parser import ResponseParser
 
 print("File loaded, ValueDimensionPCA will be defined at:", __name__)
 
@@ -403,8 +405,25 @@ class ValueDimensionPCA:
             print("DEBUG: Error accessing variance contributions:", str(e))
             return None
 
+    def analyze_pc_patterns(self, pc_index):
+        """Analyze patterns in prompts for a given PC"""
+        # Get component loadings
+        loadings = self.pca.components_[pc_index]
+        # Get sorted indices of most influential dimensions
+        sorted_indices = np.argsort(np.abs(loadings))[::-1]
+        
+        # Create description of patterns
+        pattern_desc = []
+        for idx in sorted_indices[:5]:  # Top 5 most influential dimensions
+            dim_name = self.dims_data[idx]
+            loading = loadings[idx]
+            direction = "high" if loading > 0 else "low"
+            pattern_desc.append(f"{dim_name} tends to be {direction}")
+            
+        return "\n".join(pattern_desc)
+
 # Then, the GUI class
-class ValueDimensionPCAGui:
+class ValueDimensionPCAGui(ValueDimensionPCA):
     # Add the PCA class as a class attribute
     PCA_Class = ValueDimensionPCA
     
@@ -716,6 +735,37 @@ class ValueDimensionPCAGui:
         scrollbar = ttk.Scrollbar(summary_frame, orient="vertical", command=self.summary_text.yview)
         scrollbar.pack(side="right", fill="y")
         self.summary_text.configure(yscrollcommand=scrollbar.set)
+
+        # Add PC Names section
+        names_frame = ttk.Frame(summary_frame)
+        names_frame.pack(fill="x", pady=5)
+        
+        # Add status label for name generation
+        self.status_label = ttk.Label(
+            names_frame,
+            text="Ready to generate names",
+            foreground="gray"
+        )
+        self.status_label.pack(pady=2)
+        
+        # Generate Names button
+        self.name_gen_button = ttk.Button(
+            names_frame,
+            text="Generate PC Names",
+            command=self.generate_pc_names
+        )
+        self.name_gen_button.pack(pady=5)
+        
+        # Text widget for displaying generated names
+        self.names_text = tk.Text(summary_frame, height=10, width=60)
+        self.names_text.pack(fill="both", expand=True)
+        self.names_text.pack_forget()  # Initially hidden
+        
+        # Add scrollbar for names
+        names_scrollbar = ttk.Scrollbar(summary_frame, orient="vertical", command=self.names_text.yview)
+        names_scrollbar.pack(side="right", fill="y")
+        names_scrollbar.pack_forget()  # Initially hidden
+        self.names_text.configure(yscrollcommand=names_scrollbar.set)
 
     def update_summary(self):
         """Update PCA summary with current results"""
@@ -1077,7 +1127,7 @@ class ValueDimensionPCAGui:
                 print("Switching to original ratings")
                 self.pca_instance.current_ratings = self.pca_instance.ratings_data
             else:
-                print("Switching to cosine similarity ratings")
+                print("Switching to cosine similarity ratings")                                
                 self.pca_instance.current_ratings = self.pca_instance.cosine_ratings
             
             # Update PCA with new ratings
@@ -1232,85 +1282,67 @@ class ValueDimensionPCAGui:
             print(f"- Number of prompts: {len(pca.prompts)}")
             raise
 
-    def generate_component_names(self):
-        """New method to handle PCA name generation"""
+    def generate_pc_names(self):
+        """Generate and display PC names using ChatGPT"""
         try:
+            print("\n=== Starting PC Name Generation ===")
             self.status_label.config(text="Generating component names...")
             self.root.update()
 
-            results_df = generate_pca_names(
-                pca_results=self.pca_instance,
-                prompts_df=self.prompts,
-                n_components=self.n_components
-            )
-
-            if results_df is not None:
-                self.display_component_names(results_df)
-            else:
-                messagebox.showerror(
-                    "Error", 
-                    "Failed to generate component names"
-                )
+            # Verify PCA data
+            if not hasattr(self, 'pca_instance') or self.pca_instance is None:
+                print("Debug: No PCA instance found")
+                raise ValueError("PCA must be run before generating names")
+                
+            # Initialize LLM Handler
+            print("\nDebug: Initializing LLM Handler")
+            from config import Config
+            from llm_handler import LLMHandler
+            from response_parser import ResponseParser
+            
+            config = Config()
+            llm = LLMHandler(config)
+            
+            # Make text widget visible
+            print("\nDebug: Making text widgets visible")
+            self.names_text.pack(fill="both", expand=True)
+            for widget in self.names_text.master.winfo_children():
+                if isinstance(widget, ttk.Scrollbar):
+                    widget.pack(side="right", fill="y")
+                    break
+            
+            pc_names = []
+            for i in range(self.pca_instance.components_.shape[0]):
+                # Use prepare_pc_data to format data correctly
+                pc_data = llm.prepare_pc_data(self.pca_instance, i)
+                print(f"\nDebug: Prepared data for PC{i+1}:")
+                print(f"Data structure: {pc_data.keys()}")
+                
+                response = llm.generate_name(pc_data=pc_data)
+                pc_names.append(response)
+                
+            # Display results
+            print("\nDebug: Displaying names")
+            self.names_text.delete('1.0', tk.END)
+            for result in pc_names:
+                if 'error' in result:
+                    self.names_text.insert(tk.END, f"PC{result['pc_num']}: {result['error']}\n")
+                else:
+                    self.names_text.insert(tk.END, f"PC{result['pc_num']}: {result['name']}\n")
+                    self.names_text.insert(tk.END, f"Explanation: {result['explanation']}\n\n")
+            
+            self.status_label.config(text="Names generated successfully")
+            return pc_names
 
         except Exception as e:
-            messagebox.showerror(
-                "Error", 
-                f"Name generation failed: {str(e)}"
-            )
-        finally:
-            self.status_label.config(text="Ready")
+            print(f"\nDebug: Error in generate_pc_names - {str(e)}")
+            print(f"Error type: {type(e)}")
+            import traceback
+            print(f"Traceback:\n{traceback.format_exc()}")
+            self.status_label.config(text=f"Error: {str(e)}")
+            raise e
 
-    def display_component_names(self, results_df):
-        """Display the generated names in the GUI"""
-        # Create or update results window
-        if not hasattr(self, 'results_window'):
-            self.results_window = tk.Toplevel(self.root)
-            self.results_window.title("PCA Component Names")
-        
-        # Clear existing content
-        for widget in self.results_window.winfo_children():
-            widget.destroy()
-        
-        # Create scrollable frame
-        canvas = tk.Canvas(self.results_window)
-        scrollbar = tk.Scrollbar(
-            self.results_window, 
-            orient="vertical", 
-            command=canvas.yview
-        )
-        scrollable_frame = tk.Frame(canvas)
-
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        # Display results
-        for _, row in results_df.iterrows():
-            frame = tk.Frame(scrollable_frame)
-            frame.pack(fill="x", padx=5, pady=5)
-            
-            tk.Label(
-                frame, 
-                text=f"PC {row['pc_num']}: {row['name']}", 
-                font=("Arial", 10, "bold")
-            ).pack(anchor="w")
-            
-            tk.Label(
-                frame, 
-                text=row['explanation'], 
-                wraplength=400
-            ).pack(anchor="w")
-            
-            tk.Frame(frame, height=1, bg="gray").pack(fill="x", pady=5)
-
-        # Pack scrollbar and canvas
-        scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-
+    
 # If you want to run directly from this file
 if __name__ == "__main__":
     gui = ValueDimensionPCAGui()

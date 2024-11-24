@@ -168,7 +168,7 @@ class LLMHandler:
             prompt = prompt_template.format(**pc_data)
             
             response = self.sync_client.chat.completions.create(
-                model=self.config.get('model', 'gpt-4'),
+                model=self.config.get('model', 'gpt-3.5-turbo'),
                 messages=[
                     {
                         "role": "system", 
@@ -258,7 +258,7 @@ class LLMHandler:
             prompt = prompt_template.format(**pc_data)
             
             response = await self.async_client.chat.completions.create(
-                model=self.config.get('model', 'gpt-4'),
+                model=self.config.get('model', 'gpt-3.5-turbo'),
                 messages=[
                     {
                         "role": "system", 
