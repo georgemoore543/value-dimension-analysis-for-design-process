@@ -674,35 +674,56 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             messagebox.showerror("Error", f"Error processing files: {str(e)}")
     
     def show_visualization(self, pca):
-        """Modified show_visualization to include summary panel"""
+        """Modified show_visualization to include scrollable frame"""
         try:
             print("Creating visualization window...")
             if not hasattr(self, 'viz_window'):
                 self.viz_window = tk.Toplevel(self.root)
                 self.viz_window.title("PCA Visualization")
             
+            # Create main scrollable container
+            main_canvas = tk.Canvas(self.viz_window)
+            scrollbar = ttk.Scrollbar(self.viz_window, orient="vertical", command=main_canvas.yview)
+            scrollable_frame = ttk.Frame(main_canvas)
+            
+            # Configure scrolling
+            scrollable_frame.bind(
+                "<Configure>",
+                lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+            )
+            main_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+            main_canvas.configure(yscrollcommand=scrollbar.set)
+            
             # Store PCA instance
             print("Storing PCA instance...")
             self.pca_instance = pca
             
-            # Create main container
-            main_frame = ttk.Frame(self.viz_window)
-            main_frame.pack(fill="both", expand=True)
-            
-            # Create controls and panels
+            # Create controls and panels within scrollable frame
             print("Creating UI elements...")
-            self.create_visualization_controls(main_frame)
-            self.create_summary_panel(main_frame)
+            self.create_visualization_controls(scrollable_frame)
+            self.create_summary_panel(scrollable_frame)
             
             # Create figure frame
             print("Creating figure frame...")
-            self.fig_frame = ttk.Frame(main_frame)
+            self.fig_frame = ttk.Frame(scrollable_frame)
             self.fig_frame.pack(fill="both", expand=True, pady=5)
             
             # Update displays
             print("Updating displays...")
             self.update_summary()
             self.update_plot(self.pca_instance)
+            
+            # Pack scrollbar and canvas
+            scrollbar.pack(side="right", fill="y")
+            main_canvas.pack(side="left", fill="both", expand=True)
+            
+            # Configure window size
+            self.viz_window.geometry("1000x800")
+            
+            # Enable mouse wheel scrolling
+            def _on_mousewheel(event):
+                main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            main_canvas.bind_all("<MouseWheel>", _on_mousewheel)
             
             print("Visualization setup complete")
             
