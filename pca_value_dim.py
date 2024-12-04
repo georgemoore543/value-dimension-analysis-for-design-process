@@ -944,40 +944,78 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             status_label.config(text="Generating component names...")
             self.root.update()
 
-            # Get appropriate instance and components
+            # Initialize the appropriate instance
             if analysis_type == "pca":
+                if not hasattr(self, 'pca_instance') or self.pca_instance is None:
+                    raise ValueError("PCA analysis has not been performed yet")
                 instance = self.pca_instance
+            else:  # ICA
+                if not hasattr(self, 'ica_instance') or self.ica_instance is None:
+                    raise ValueError("ICA analysis has not been performed yet")
+                instance = self.ica_instance
+
+            # Generate names based on analysis type
+            if analysis_type == "pca":
                 # Format PCA results as expected by generate_pca_names
-                pca_results = {}
+                results_dict = {}
                 for i, comp in enumerate(instance.pca.components_):
-                    # Get indices of top dimensions (both positive and negative)
                     sorted_indices = abs(comp).argsort()[::-1]
                     top_dims = [instance.original_dims[idx] for idx in sorted_indices[:5]]
                     
-                    # Separate high and low loading prompts
                     high_indices = comp.argsort()[::-1][:5]
                     low_indices = comp.argsort()[:5]
                     
-                    pca_results[f'pc_{i+1}_top_dims'] = ', '.join(map(str, top_dims))
-                    pca_results[f'pc_{i+1}_high_prompts'] = ', '.join([instance.original_dims[idx] for idx in high_indices])
-                    pca_results[f'pc_{i+1}_low_prompts'] = ', '.join([instance.original_dims[idx] for idx in low_indices])
-
-            # Convert prompts to DataFrame as expected by generate_pca_names
-            prompts_df = pd.DataFrame({'prompt': instance.original_dims})
-
-            print("Debug info before generate_pca_names:")
-            print(f"PCA results keys: {pca_results.keys()}")
-            print(f"Prompts DataFrame shape: {prompts_df.shape}")
-
-            # Import generate_pca_names function
-            from run_pca_naming import generate_pca_names
-
-            # Get results from name generation
-            results = generate_pca_names(
-                pca_results=pca_results,
-                prompts_df=prompts_df,
-                n_components=min(8, len(instance.pca.components_))
-            )
+                    results_dict[f'pc_{i+1}_top_dims'] = ', '.join(map(str, top_dims))
+                    results_dict[f'pc_{i+1}_high_prompts'] = ', '.join([instance.original_dims[idx] for idx in high_indices])
+                    results_dict[f'pc_{i+1}_low_prompts'] = ', '.join([instance.original_dims[idx] for idx in low_indices])
+                
+                prompts_df = pd.DataFrame({'prompt': instance.original_dims})
+                
+                from run_pca_naming import generate_pca_names
+                results = generate_pca_names(
+                    pca_results=results_dict,
+                    prompts_df=prompts_df,
+                    n_components=min(8, len(instance.pca.components_))
+                )
+            else:  # ICA
+                # Format ICA results
+                results_dict = {}
+                n_features = len(self.pca_instance.original_dims)
+                
+                for i in range(instance.mixing_matrix.shape[1]):
+                    coeffs = instance.mixing_matrix[:, i]
+                    kurt_score = instance.kurtosis_scores[i]
+                    
+                    # Get indices for top dimensions (both positive and negative)
+                    sorted_indices = abs(coeffs).argsort()[::-1]
+                    sorted_indices = sorted_indices[sorted_indices < n_features]
+                    top_dims = [f"{self.pca_instance.original_dims[idx]} ({coeffs[idx]:.3f})" 
+                               for idx in sorted_indices[:5]]
+                    
+                    # Get indices for high and low loading prompts
+                    high_indices = coeffs.argsort()[::-1][:5]
+                    low_indices = coeffs.argsort()[:5]
+                    
+                    # Store formatted results
+                    results_dict[f'ic_{i+1}_top_dims'] = ', '.join(top_dims)
+                    results_dict[f'ic_{i+1}_high_prompts'] = ', '.join(
+                        [f"{self.pca_instance.original_dims[idx]} ({coeffs[idx]:.3f})" 
+                         for idx in high_indices if idx < n_features]
+                    )
+                    results_dict[f'ic_{i+1}_low_prompts'] = ', '.join(
+                        [f"{self.pca_instance.original_dims[idx]} ({coeffs[idx]:.3f})" 
+                         for idx in low_indices if idx < n_features]
+                    )
+                    results_dict[f'ic_{i+1}_kurtosis'] = kurt_score
+                
+                prompts_df = pd.DataFrame({'prompt': self.pca_instance.original_dims})
+                
+                from run_pca_naming import generate_ica_names
+                results = generate_ica_names(
+                    ica_results=results_dict,
+                    prompts_df=prompts_df,
+                    n_components=min(8, instance.mixing_matrix.shape[1])
+                )
 
             if results is not None:
                 self.display_component_names(results, analysis_type)
@@ -993,14 +1031,24 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
 
         except Exception as e:
             print(f"Error generating component names: {str(e)}")
-            print("Debug info:")
+            print("\nDebug information:")
             print(f"Analysis type: {analysis_type}")
-            if hasattr(self.pca_instance, 'pca'):
-                print(f"PCA components shape: {self.pca_instance.pca.components_.shape}")
-            print(f"Original dims type: {type(self.pca_instance.original_dims)}")
-            if 'results' in locals():
-                print(f"Results type: {type(results)}")
-                print(f"Results content: {results}")
+            
+            if analysis_type == "ica":
+                if hasattr(self, 'ica_instance') and self.ica_instance is not None:
+                    print("ICA instance exists")
+                    if hasattr(self.ica_instance, 'ica_components'):
+                        print(f"ICA components type: {type(self.ica_instance.ica_components)}")
+                        print(f"ICA components shape: {self.ica_instance.ica_components.shape}")
+                    if hasattr(self.ica_instance, 'mixing_matrix'):
+                        print(f"Mixing matrix type: {type(self.ica_instance.mixing_matrix)}")
+                        print(f"Mixing matrix shape: {self.ica_instance.mixing_matrix.shape}")
+                    if hasattr(self.ica_instance, 'kurtosis_scores'):
+                        print(f"Kurtosis scores type: {type(self.ica_instance.kurtosis_scores)}")
+                        print(f"Kurtosis scores length: {len(self.ica_instance.kurtosis_scores)}")
+                else:
+                    print("ICA instance not found")
+            
             messagebox.showerror("Error", f"Name generation failed: {str(e)}")
         finally:
             status_label.config(text="Ready")

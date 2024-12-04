@@ -159,60 +159,86 @@ class LLMHandler:
             return {}
 
     @with_error_handling
-    def generate_name(self, pc_data: Dict[str, Any], custom_prompt: Optional[str] = None) -> Dict[str, Any]:
-        """Generate name for a PC with logging"""
-        start_time = time.time()
+    def generate_name(self, component_data, component_type='pca'):
+        """Generate a name for a component using OpenAI API
         
+        Args:
+            component_data: Dictionary containing component information
+            component_type: String indicating the type of component ('pca' or 'ica')
+        """
         try:
-            prompt_template = custom_prompt or self.config.get('default_prompt_template')
-            prompt = prompt_template.format(**pc_data)
-            
+            if component_type == 'pca':
+                prompt = self._create_pca_prompt(component_data)
+            else:  # ica
+                prompt = self._create_ica_prompt(component_data)
+
             response = self.sync_client.chat.completions.create(
-                model=self.config.get('model', 'gpt-3.5-turbo'),
+                model="gpt-4",
                 messages=[
-                    {
-                        "role": "system", 
-                        "content": "You are a helpful assistant specializing in analyzing and naming statistical patterns."
-                    },
-                    {
-                        "role": "user", 
-                        "content": prompt
-                    }
+                    {"role": "system", "content": "You are a helpful assistant that names statistical components."},
+                    {"role": "user", "content": prompt}
                 ],
-                temperature=self.config.get('temperature', 0.7),
-                max_tokens=self.config.get('max_tokens', 200)
+                temperature=0.7,
+                max_tokens=150
             )
-            
-            content = response.choices[0].message.content
-            name, explanation, error = self.parser.parse_name_response(content)
+
+            # Parse the response using parse_name_response instead of parse_response
+            name, explanation, error = self.parser.parse_name_response(response.choices[0].message.content)
             
             if error:
-                return {
-                    'pc_num': pc_data['pc_num'],
-                    'error': error
-                }
-                
+                print(f"Error parsing response: {error}")
+                return None
+            
+            # Format the result
             result = {
-                'pc_num': pc_data['pc_num'],
-                'name': name,
-                'explanation': explanation,
-                'raw_response': content,
-                'timestamp': datetime.now()
+                'component_number': (
+                    component_data.get('pc_num') if component_type == 'pca' 
+                    else component_data.get('ic_num')
+                ),
+                'component_name': name,
+                'description': explanation
             }
             
-            self.logger.log_api_call(pc_data, json.loads(
-                json.dumps(result, cls=DateTimeEncoder)
-            ))
-            self.logger.log_performance(start_time, time.time(), 1)
-            
             return result
-            
+
         except Exception as e:
-            self.logger.log_error(e, {
-                'pc_data': pc_data,
-                'custom_prompt': custom_prompt
-            })
-            raise
+            print(f"Error generating name: {str(e)}")
+            return None
+
+    def _create_pca_prompt(self, pc_data):
+        """Create prompt for PCA component naming"""
+        return f"""Please analyze this Principal Component and provide a concise name and explanation.
+
+Component number: {pc_data['pc_num']}
+Top contributing dimensions: {pc_data['top_dims']}
+High-loading prompts: {pc_data['high_prompts']}
+Low-loading prompts: {pc_data['low_prompts']}
+
+Please provide:
+1. A short, descriptive name (2-6 words)
+2. A brief explanation of what this component might represent
+
+Format your response as:
+Name: [your suggested name]
+Explanation: [your explanation]"""
+
+    def _create_ica_prompt(self, ic_data):
+        """Create prompt for ICA component naming"""
+        return f"""Please analyze this Independent Component and provide a concise name and explanation.
+
+Component number: {ic_data['ic_num']}
+Top contributing dimensions: {ic_data['top_dims']}
+High-loading prompts: {ic_data['high_prompts']}
+Low-loading prompts: {ic_data['low_prompts']}
+{ic_data.get('additional_info', '')}
+
+Please provide:
+1. A short, descriptive name (2-6 words) that captures the independent signal this component might represent
+2. A brief explanation of what this independent signal might represent, considering that ICA finds statistically independent sources
+
+Format your response as:
+Name: [your suggested name]
+Explanation: [your explanation]"""
 
     def prepare_pc_data(self, pca_instance, pc_index: int) -> Dict[str, Any]:
         """Prepare data about a PC for the LLM prompt"""
