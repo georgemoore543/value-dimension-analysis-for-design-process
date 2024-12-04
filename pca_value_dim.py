@@ -1143,28 +1143,32 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             for widget in frame.winfo_children():
                 widget.destroy()
             
+            instance = self.pca_instance if analysis_type == "pca" else self.ica_instance
+            
             if analysis_type == "pca":
-                if plot_type == "matrix":
-                    self.create_matrix_plot(self.pca_instance)
-                elif plot_type == "heatmap":
-                    self.create_heatmap_plot(self.pca_instance)
-                else:  # scatter
+                if plot_type == "scatter":
                     pc1 = int(self.pc_x.get()) - 1
                     pc2 = int(self.pc_y.get()) - 1
-                    self.create_scatter_plot(self.pca_instance, pc1, pc2)
-            else:  # ICA
-                if plot_type == "matrix":
-                    self.create_ica_matrix_plot()
+                    self.create_scatter_plot(instance, pc1, pc2)
+                elif plot_type == "matrix":
+                    self.create_matrix_plot(instance, "pca")
                 elif plot_type == "heatmap":
-                    self.create_ica_mixing_heatmap()
-                elif plot_type == "kurtosis":
-                    self.create_kurtosis_plot()
-                elif plot_type == "signals":
-                    self.create_signal_plot()
-                else:  # scatter
+                    self.create_heatmap_plot(instance, "pca")
+            else:  # ICA
+                if plot_type == "scatter":
                     ic1 = int(self.ic_x.get()) - 1
                     ic2 = int(self.ic_y.get()) - 1
                     self.create_ica_scatter_plot(ic1, ic2)
+                elif plot_type == "matrix":
+                    self.create_matrix_plot(instance, "ica")
+                elif plot_type == "heatmap":
+                    self.create_heatmap_plot(instance, "ica")
+                elif plot_type == "kurtosis":
+                    self.create_kurtosis_plot(instance)
+                elif plot_type == "signals":
+                    self.create_signals_plot(instance)
+                elif plot_type == "mixing":
+                    self.create_mixing_plot(instance)
                 
         except Exception as e:
             print(f"Error updating plot: {str(e)}")
@@ -1337,152 +1341,147 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             print(f"Error updating PCA summary: {str(e)}")
             raise
 
-    def create_ica_scatter_plot(self, ic1, ic2):
-        """Create scatter plot for ICA components"""
+    def create_scatter_plot(self, instance, x_idx, y_idx):
+        """Create scatter plot for PCA components"""
         try:
-            # Check if ICA components exist
-            if (self.ica_instance is None or 
-                self.ica_instance.ica_components is None):
-                print("ICA components not available. Performing ICA...")
-                if not self.ica_instance.perform_ica(self.pca_instance.current_ratings):
-                    raise ValueError("Failed to perform ICA analysis")
-            
-            # Create figure and axis
-            fig = Figure(figsize=(10, 8))
-            ax = fig.add_subplot(111)
-            
-            # Get ICA components
-            ica_data = self.ica_instance.ica_components
-            
-            # Create scatter plot
-            scatter = ax.scatter(
-                ica_data[:, ic1],
-                ica_data[:, ic2],
-                alpha=0.6,
-                s=float(self.point_size.get())
-            )
-            
-            # Labels and title
-            ax.set_xlabel(f'IC{ic1 + 1}')
-            ax.set_ylabel(f'IC{ic2 + 1}')
-            ax.set_title('ICA Components Scatter Plot')
-            
-            # Add grid
-            ax.grid(True, linestyle='--', alpha=0.7)
-            
-            # Create canvas
-            canvas = FigureCanvasTkAgg(fig, master=self.ica_fig_frame)
-            canvas.draw()
-            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-            
-            # Add toolbar
-            toolbar = NavigationToolbar2Tk(canvas, self.ica_fig_frame)
-            toolbar.update()
-            
-        except Exception as e:
-            print(f"Error creating ICA scatter plot: {str(e)}")
-            raise
-
-    def create_ica_matrix_plot(self):
-        """Create matrix plot for ICA components"""
-        try:
-            # Get ICA components
-            ica_data = self.ica_instance.ica_components
-            n_components = ica_data.shape[1]
-            
-            # Create figure with subplots
-            fig = Figure(figsize=(12, 10))
-            
-            # Calculate number of rows and columns for subplot grid
-            n_rows = (n_components + 1) // 2
-            n_cols = min(2, n_components)
-            
-            # Create subplots
-            for i in range(n_components):
-                for j in range(i+1, n_components):
-                    ax = fig.add_subplot(n_rows, n_cols, i*n_cols + j + 1)
-                    ax.scatter(
-                        ica_data[:, i],
-                        ica_data[:, j],
-                        alpha=0.6,
-                        s=float(self.point_size.get())
-                    )
-                    ax.set_xlabel(f'IC{i+1}')
-                    ax.set_ylabel(f'IC{j+1}')
-                    ax.grid(True, linestyle='--', alpha=0.7)
-            
-            fig.tight_layout()
-            
-            # Create canvas
-            canvas = FigureCanvasTkAgg(fig, master=self.ica_fig_frame)
-            canvas.draw()
-            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-            
-            # Add toolbar
-            toolbar = NavigationToolbar2Tk(canvas, self.ica_fig_frame)
-            toolbar.update()
-            
-        except Exception as e:
-            print(f"Error creating ICA matrix plot: {str(e)}")
-            raise
-
-    def create_ica_mixing_heatmap(self):
-        """Create heatmap of ICA mixing matrix"""
-        try:
-            # Get mixing matrix
-            mixing_matrix = self.ica_instance.mixing_matrix
+            # Clear previous plot
+            for widget in self.pca_fig_frame.winfo_children():
+                widget.destroy()
             
             # Create figure
             fig = Figure(figsize=(10, 8))
             ax = fig.add_subplot(111)
             
-            # Create heatmap
-            im = ax.imshow(mixing_matrix, cmap='coolwarm', aspect='auto')
+            # Get data
+            x_data = instance.pca_ratings[:, x_idx]
+            y_data = instance.pca_ratings[:, y_idx]
             
-            # Add colorbar
-            fig.colorbar(im)
+            # Create scatter plot
+            ax.scatter(x_data, y_data, alpha=0.6, s=float(self.point_size.get()))
             
-            # Labels
-            ax.set_xlabel('Independent Components')
-            ax.set_ylabel('Original Features')
-            ax.set_title('ICA Mixing Matrix Heatmap')
+            # Customize plot
+            ax.set_xlabel(f"PC{x_idx + 1}")
+            ax.set_ylabel(f"PC{y_idx + 1}")
+            ax.set_title("PCA Component Scatter Plot")
+            ax.grid(True, alpha=0.3)
             
             # Create canvas
-            canvas = FigureCanvasTkAgg(fig, master=self.ica_fig_frame)
+            canvas = FigureCanvasTkAgg(fig, master=self.pca_fig_frame)
             canvas.draw()
             canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
             
             # Add toolbar
-            toolbar = NavigationToolbar2Tk(canvas, self.ica_fig_frame)
+            toolbar = NavigationToolbar2Tk(canvas, self.pca_fig_frame)
             toolbar.update()
             
         except Exception as e:
-            print(f"Error creating ICA mixing heatmap: {str(e)}")
+            print(f"Error creating scatter plot: {str(e)}")
             raise
 
-    def create_kurtosis_plot(self):
-        """Create bar plot of kurtosis scores"""
+    def create_matrix_plot(self, instance, analysis_type="pca"):
+        """Create correlation matrix plot for PCA or ICA"""
         try:
-            # Get kurtosis scores
-            kurtosis_scores = self.ica_instance.kurtosis_scores
+            frame = self.pca_fig_frame if analysis_type == "pca" else self.ica_fig_frame
+            
+            # Clear previous plot
+            for widget in frame.winfo_children():
+                widget.destroy()
+            
+            # Get appropriate data and dimensions
+            if analysis_type == "pca":
+                data = instance.pca.components_
+                dims = instance.original_dims
+            else:
+                data = instance.mixing_matrix.T
+                dims = self.pca_instance.original_dims  # Use PCA instance's dimensions
+            
+            # Debug print
+            print(f"\nDebug information for {analysis_type} matrix plot:")
+            print(f"Data shape: {data.shape}")
+            print(f"Number of dimensions: {len(dims)}")
+            
+            # Create figure with subplots
+            n_components = data.shape[0]
+            n_cols = min(4, n_components)
+            n_rows = (n_components + n_cols - 1) // n_cols
+            
+            fig = Figure(figsize=(12, 3*n_rows))
+            
+            for i in range(n_components):
+                ax = fig.add_subplot(n_rows, n_cols, i+1)
+                
+                # Get component data
+                component_data = data[i]
+                
+                # Ensure we don't exceed the number of dimensions
+                valid_indices = np.where(np.arange(len(component_data)) < len(dims))[0]
+                
+                # Sort valid indices by absolute values
+                sorted_indices = valid_indices[np.argsort(np.abs(component_data[valid_indices]))[::-1]]
+                
+                # Take top N dimensions (where N is min of 12 and available valid dimensions)
+                n_dims = min(12, len(sorted_indices))
+                top_indices = sorted_indices[:n_dims]
+                
+                if len(top_indices) == 0:
+                    print(f"Warning: No valid indices for component {i+1}")
+                    continue
+                    
+                # Plot bars
+                bars = ax.bar(range(len(top_indices)), component_data[top_indices])
+                
+                # Color bars based on value
+                for bar in bars:
+                    if bar.get_height() < 0:
+                        bar.set_color('red')
+                    else:
+                        bar.set_color('blue')
+                
+                # Customize plot
+                ax.set_title(f"{'PC' if analysis_type == 'pca' else 'IC'}{i+1}")
+                ax.set_xticks(range(len(top_indices)))
+                ax.set_xticklabels([dims[idx] for idx in top_indices], rotation=45, ha='right')
+                ax.grid(True, alpha=0.3)
+            
+            fig.tight_layout()
+            
+            # Create canvas
+            canvas = FigureCanvasTkAgg(fig, master=frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Add toolbar
+            toolbar = NavigationToolbar2Tk(canvas, frame)
+            toolbar.update()
+            
+        except Exception as e:
+            print(f"Error creating {analysis_type.upper()} matrix plot: {str(e)}")
+            print(f"Additional debug info:")
+            if analysis_type == "ica":
+                print(f"ICA mixing matrix shape: {instance.mixing_matrix.shape}")
+                print(f"Number of dimensions in PCA: {len(self.pca_instance.original_dims)}")
+            raise
+
+    def create_kurtosis_plot(self, instance):
+        """Create kurtosis plot for ICA components"""
+        try:
+            # Clear previous plot
+            for widget in self.ica_fig_frame.winfo_children():
+                widget.destroy()
             
             # Create figure
             fig = Figure(figsize=(10, 6))
             ax = fig.add_subplot(111)
             
-            # Create bar plot
-            x = range(1, len(kurtosis_scores) + 1)
-            ax.bar(x, kurtosis_scores)
+            # Plot kurtosis values
+            x = range(1, len(instance.kurtosis_scores) + 1)
+            ax.bar(x, instance.kurtosis_scores)
             
-            # Labels and title
-            ax.set_xlabel('Independent Component')
-            ax.set_ylabel('Kurtosis')
-            ax.set_title('Kurtosis of Independent Components')
-            ax.set_xticks(x)
-            ax.set_xticklabels([f'IC{i}' for i in x])
-            
-            # Add grid
-            ax.grid(True, linestyle='--', alpha=0.7)
+            # Customize plot
+            ax.set_xlabel("Independent Component")
+            ax.set_ylabel("Kurtosis")
+            ax.set_title("ICA Component Kurtosis Values")
+            ax.grid(True, alpha=0.3)
             
             # Create canvas
             canvas = FigureCanvasTkAgg(fig, master=self.ica_fig_frame)
@@ -1497,27 +1496,26 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             print(f"Error creating kurtosis plot: {str(e)}")
             raise
 
-    def create_signal_plot(self):
-        """Create plot of recovered signals"""
+    def create_signals_plot(self, instance):
+        """Create signals plot for ICA components"""
         try:
-            # Get ICA components
-            signals = self.ica_instance.ica_components
+            # Clear previous plot
+            for widget in self.ica_fig_frame.winfo_children():
+                widget.destroy()
             
             # Create figure
             fig = Figure(figsize=(12, 8))
             
-            # Calculate number of subplots needed
-            n_components = signals.shape[1]
-            n_rows = (n_components + 1) // 2
-            n_cols = min(2, n_components)
-            
-            # Create subplots for each component
+            # Plot each IC signal
+            n_components = instance.ica_components.shape[1]
             for i in range(n_components):
-                ax = fig.add_subplot(n_rows, n_cols, i + 1)
-                ax.plot(signals[:, i])
-                ax.set_title(f'IC {i+1}')
-                ax.grid(True, linestyle='--', alpha=0.7)
+                ax = fig.add_subplot(n_components, 1, i+1)
+                ax.plot(instance.ica_components[:, i])
+                ax.set_ylabel(f"IC{i+1}")
+                ax.grid(True, alpha=0.3)
             
+            # Adjust layout
+            fig.suptitle("ICA Component Signals")
             fig.tight_layout()
             
             # Create canvas
@@ -1530,7 +1528,149 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             toolbar.update()
             
         except Exception as e:
-            print(f"Error creating signal plot: {str(e)}")
+            print(f"Error creating signals plot: {str(e)}")
+            raise
+
+    def create_mixing_plot(self, instance):
+        """Create mixing matrix plot for ICA"""
+        try:
+            # Clear previous plot
+            for widget in self.ica_fig_frame.winfo_children():
+                widget.destroy()
+            
+            # Create figure
+            fig = Figure(figsize=(10, 8))
+            ax = fig.add_subplot(111)
+            
+            # Plot mixing matrix
+            im = ax.imshow(instance.mixing_matrix, cmap='RdBu_r', aspect='auto')
+            
+            # Add colorbar
+            fig.colorbar(im)
+            
+            # Customize plot
+            ax.set_title("ICA Mixing Matrix")
+            ax.set_xlabel("Independent Components")
+            ax.set_ylabel("Features")
+            
+            # Set ticks
+            ax.set_xticks(range(instance.mixing_matrix.shape[1]))
+            ax.set_xticklabels([f"IC{i+1}" for i in range(instance.mixing_matrix.shape[1])])
+            
+            # Create canvas
+            canvas = FigureCanvasTkAgg(fig, master=self.ica_fig_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Add toolbar
+            toolbar = NavigationToolbar2Tk(canvas, self.ica_fig_frame)
+            toolbar.update()
+            
+        except Exception as e:
+            print(f"Error creating mixing matrix plot: {str(e)}")
+            raise
+
+    def create_ica_scatter_plot(self, ic1, ic2):
+        """Create scatter plot for ICA components"""
+        try:
+            # Clear previous plot
+            for widget in self.ica_fig_frame.winfo_children():
+                widget.destroy()
+            
+            # Create figure
+            fig = Figure(figsize=(10, 8))
+            ax = fig.add_subplot(111)
+            
+            # Get data
+            x_data = self.ica_instance.ica_components[:, ic1]
+            y_data = self.ica_instance.ica_components[:, ic2]
+            
+            # Create scatter plot
+            ax.scatter(x_data, y_data, alpha=0.6, s=float(self.point_size.get()))
+            
+            # Customize plot
+            ax.set_xlabel(f"IC{ic1 + 1}")
+            ax.set_ylabel(f"IC{ic2 + 1}")
+            ax.set_title("ICA Component Scatter Plot")
+            ax.grid(True, alpha=0.3)
+            
+            # Create canvas
+            canvas = FigureCanvasTkAgg(fig, master=self.ica_fig_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Add toolbar
+            toolbar = NavigationToolbar2Tk(canvas, self.ica_fig_frame)
+            toolbar.update()
+            
+        except Exception as e:
+            print(f"Error creating ICA scatter plot: {str(e)}")
+            raise
+
+    def create_heatmap_plot(self, instance, analysis_type="pca"):
+        """Create heatmap plot for PCA or ICA"""
+        try:
+            frame = self.pca_fig_frame if analysis_type == "pca" else self.ica_fig_frame
+            
+            # Clear previous plot
+            for widget in frame.winfo_children():
+                widget.destroy()
+            
+            # Get appropriate data and dimensions
+            if analysis_type == "pca":
+                data = instance.pca.components_
+                dims = instance.original_dims
+                title = "PCA Components Heatmap"
+                ylabel = "Principal Components"
+            else:
+                data = instance.mixing_matrix.T  # Transpose for consistent visualization
+                dims = self.pca_instance.original_dims  # Use PCA instance's dimensions
+                title = "ICA Mixing Matrix Heatmap"
+                ylabel = "Independent Components"
+            
+            # Create figure
+            fig = Figure(figsize=(12, 8))
+            ax = fig.add_subplot(111)
+            
+            # Create heatmap
+            im = ax.imshow(data, cmap='RdBu_r', aspect='auto')
+            
+            # Add colorbar
+            fig.colorbar(im)
+            
+            # Customize plot
+            ax.set_title(title)
+            ax.set_xlabel("Dimensions")
+            ax.set_ylabel(ylabel)
+            
+            # Set y-axis ticks (component labels)
+            n_components = data.shape[0]
+            ax.set_yticks(range(n_components))
+            ax.set_yticklabels([f"{analysis_type.upper()}{i+1}" for i in range(n_components)])
+            
+            # Set x-axis ticks (dimension labels)
+            if len(dims) <= 20:
+                ax.set_xticks(range(len(dims)))
+                ax.set_xticklabels(dims, rotation=45, ha='right')
+            else:
+                # Show fewer ticks for readability
+                step = len(dims) // 10
+                ax.set_xticks(range(0, len(dims), step))
+                ax.set_xticklabels([dims[i] for i in range(0, len(dims), step)], rotation=45, ha='right')
+            
+            fig.tight_layout()
+            
+            # Create canvas
+            canvas = FigureCanvasTkAgg(fig, master=frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Add toolbar
+            toolbar = NavigationToolbar2Tk(canvas, frame)
+            toolbar.update()
+            
+        except Exception as e:
+            print(f"Error creating {analysis_type.upper()} heatmap plot: {str(e)}")
             raise
 
 # If you want to run directly from this file
