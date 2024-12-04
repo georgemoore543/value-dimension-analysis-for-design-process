@@ -883,17 +883,12 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             # Clear existing text
             text_widget.delete(1.0, tk.END)
             
-            # Check if ICA instance exists and has been fitted
-            if not hasattr(self, 'ica_instance') or self.ica_instance is None:
-                text_widget.insert(tk.END, "ICA analysis has not been performed yet.\n")
-                return
-            
             # Data preprocessing info
             text_widget.insert(tk.END, "Data Preprocessing:\n", "heading")
             text_widget.insert(tk.END, "- Standardization: StandardScaler\n")
             text_widget.insert(tk.END, f"- Input dimensions: {len(self.pca_instance.original_dims)}\n\n")
 
-            # Convergence information (with checks)
+            # Convergence information
             text_widget.insert(tk.END, "Convergence Information:\n", "heading")
             if hasattr(self.ica_instance, 'convergence_info') and self.ica_instance.convergence_info:
                 conv_info = self.ica_instance.convergence_info
@@ -902,26 +897,51 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             else:
                 text_widget.insert(tk.END, "- Convergence information not available\n\n")
 
-            # Kurtosis information (with checks)
-            text_widget.insert(tk.END, "Component Kurtosis:\n", "heading")
-            if hasattr(self.ica_instance, 'kurtosis_scores') and self.ica_instance.kurtosis_scores is not None:
-                for i, kurt in enumerate(self.ica_instance.kurtosis_scores):
-                    text_widget.insert(tk.END, f"IC{i+1}: {kurt:.3f}\n")
-            else:
-                text_widget.insert(tk.END, "- Kurtosis information not available\n")
-            text_widget.insert(tk.END, "\n")
+            # Component contributions section
+            text_widget.insert(tk.END, "Component Contributions from Mixing Matrix:\n", "heading")
+            n_top = int(self.ica_top_n.get())
+            
+            # Get mixing matrix and ensure it's properly oriented
+            mixing_matrix = self.ica_instance.mixing_matrix
+            n_components = mixing_matrix.shape[1]
+            
+            for i in range(n_components):
+                # Get mixing coefficients for this component
+                coefficients = mixing_matrix[:, i]
+                kurt = self.ica_instance.kurtosis_scores[i]
+                
+                text_widget.insert(tk.END, f"\nIC{i+1} (kurtosis: {kurt:.3f}):\n", "subheading")
+                
+                # Sort indices by absolute coefficient values
+                sorted_indices = np.argsort(np.abs(coefficients))[::-1]
+                
+                # Separate positive and negative contributions
+                pos_indices = [idx for idx in sorted_indices[:n_top] if coefficients[idx] > 0]
+                neg_indices = [idx for idx in sorted_indices[:n_top] if coefficients[idx] < 0]
+                
+                # Show positive contributions
+                if pos_indices:
+                    text_widget.insert(tk.END, "  Positive contributions:\n", "italic")
+                    for idx in pos_indices:
+                        if idx < len(self.pca_instance.original_dims):  # Ensure index is valid
+                            dim = self.pca_instance.original_dims[idx]
+                            coef = coefficients[idx]
+                            text_widget.insert(tk.END, f"    {dim}: {coef:.3f}\n")
+                
+                # Show negative contributions
+                if neg_indices:
+                    text_widget.insert(tk.END, "  Negative contributions:\n", "italic")
+                    for idx in neg_indices:
+                        if idx < len(self.pca_instance.original_dims):  # Ensure index is valid
+                            dim = self.pca_instance.original_dims[idx]
+                            coef = coefficients[idx]
+                            text_widget.insert(tk.END, f"    {dim}: {coef:.3f}\n")
 
-            # Mixing matrix information (with checks)
-            text_widget.insert(tk.END, "Mixing Matrix Statistics:\n", "heading")
-            if hasattr(self.ica_instance, 'mixing_matrix') and self.ica_instance.mixing_matrix is not None:
-                mixing_matrix = self.ica_instance.mixing_matrix
-                text_widget.insert(tk.END, f"- Shape: {mixing_matrix.shape}\n")
-                text_widget.insert(tk.END, f"- Mean: {np.mean(mixing_matrix):.3f}\n")
-                text_widget.insert(tk.END, f"- Std: {np.std(mixing_matrix):.3f}\n")
-                text_widget.insert(tk.END, f"- Max: {np.max(mixing_matrix):.3f}\n")
-                text_widget.insert(tk.END, f"- Min: {np.min(mixing_matrix):.3f}\n\n")
-            else:
-                text_widget.insert(tk.END, "- Mixing matrix information not available\n\n")
+            # Kurtosis summary
+            text_widget.insert(tk.END, "\nKurtosis Summary:\n", "heading")
+            text_widget.insert(tk.END, f"- Mean kurtosis: {np.mean(self.ica_instance.kurtosis_scores):.3f}\n")
+            text_widget.insert(tk.END, f"- Max kurtosis: {np.max(self.ica_instance.kurtosis_scores):.3f}\n")
+            text_widget.insert(tk.END, f"- Min kurtosis: {np.min(self.ica_instance.kurtosis_scores):.3f}\n\n")
 
             # Software information
             text_widget.insert(tk.END, "Software Information:\n", "heading")
@@ -931,6 +951,8 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
 
             # Apply tags for formatting
             text_widget.tag_configure("heading", font=("TkDefaultFont", 10, "bold"))
+            text_widget.tag_configure("subheading", font=("TkDefaultFont", 9, "bold"))
+            text_widget.tag_configure("italic", font=("TkDefaultFont", 9, "italic"))
             
         except Exception as e:
             print(f"Error updating ICA summary: {str(e)}")
@@ -1059,6 +1081,30 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             print(f"Creating control frame for {analysis_type.upper()}...")
             control_frame = ttk.Frame(parent)
             control_frame.pack(fill="x", padx=10, pady=5)
+            
+            # Add controls for number of top variables to show
+            var_control_frame = ttk.LabelFrame(control_frame, text="Summary Controls", padding="5")
+            var_control_frame.pack(fill="x", pady=5)
+            
+            ttk.Label(var_control_frame, text="Top variables to show:").pack(side="left", padx=5)
+            
+            # Create and store the variable
+            if analysis_type == "pca":
+                self.pca_top_n = tk.StringVar(value="5")
+                top_n_var = self.pca_top_n
+            else:
+                self.ica_top_n = tk.StringVar(value="5")
+                top_n_var = self.ica_top_n
+            
+            top_n_entry = ttk.Entry(var_control_frame, textvariable=top_n_var, width=3)
+            top_n_entry.pack(side="left")
+            
+            # Add update button
+            ttk.Button(
+                var_control_frame,
+                text="Update Summary",
+                command=lambda: self.update_summary(analysis_type)
+            ).pack(side="left", padx=5)
             
             # Ratings type toggle (only for PCA)
             if analysis_type == "pca":
@@ -1336,6 +1382,37 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
 
             # Apply tags for formatting
             text_widget.tag_configure("heading", font=("TkDefaultFont", 10, "bold"))
+            
+            # Add component contributions section
+            text_widget.insert(tk.END, "\nComponent Contributions:\n", "heading")
+            n_top = int(self.pca_top_n.get())
+            
+            for i, comp in enumerate(self.pca_instance.components_):
+                var_exp = self.pca_instance.explained_variance_ratio_[i]
+                text_widget.insert(tk.END, f"\nPC{i+1} ({var_exp:.2%} variance explained):\n", "subheading")
+                
+                # Get indices sorted by absolute loading values
+                sorted_indices = np.argsort(np.abs(comp))[::-1]
+                
+                # Separate positive and negative contributions
+                pos_indices = [idx for idx in sorted_indices[:n_top] if comp[idx] > 0]
+                neg_indices = [idx for idx in sorted_indices[:n_top] if comp[idx] < 0]
+                
+                # Show positive contributions
+                if pos_indices:
+                    text_widget.insert(tk.END, "  Positive contributions:\n", "italic")
+                    for idx in pos_indices:
+                        dim = self.pca_instance.original_dims[idx]
+                        loading = comp[idx]
+                        text_widget.insert(tk.END, f"    {dim}: {loading:.3f}\n")
+                
+                # Show negative contributions
+                if neg_indices:
+                    text_widget.insert(tk.END, "  Negative contributions:\n", "italic")
+                    for idx in neg_indices:
+                        dim = self.pca_instance.original_dims[idx]
+                        loading = comp[idx]
+                        text_widget.insert(tk.END, f"    {dim}: {loading:.3f}\n")
             
         except Exception as e:
             print(f"Error updating PCA summary: {str(e)}")
