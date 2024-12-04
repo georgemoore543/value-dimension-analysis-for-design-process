@@ -3,29 +3,97 @@ import openai
 from datetime import datetime
 import os
 from openpyxl.styles import PatternFill
+from tkinter import filedialog
+import tkinter as tk
 
 # Initialize the OpenAI client
 client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
+def validate_file_structure(df, file_type):
+    """Validate the structure of uploaded files."""
+    if file_type == "design_process":
+        required_cols = ["Prompt"]
+        if not all(col in df.columns for col in required_cols):
+            return False, "Design Process Output file must contain a 'Prompt' column"
+    
+    elif file_type == "value_dimensions":
+        required_cols = ["value dimensions", "dim_definitions"]
+        if not all(col in df.columns for col in required_cols):
+            return False, "Value Dimensions file must contain 'value dimensions' and 'dim_definitions' columns"
+    
+    elif file_type == "scale_definitions":
+        if "scale_point" not in df.columns:
+            return False, "Scale Definitions file must contain a 'scale_point' column"
+        
+    return True, "Valid file structure"
+
 def read_excel_files():
-    """Read the input Excel files."""
+    """Read the input Excel files using file dialog."""
     try:
-        prompts = pd.read_excel('C:/Users/George/Dropbox/R_files/compost-tp/prompts.xlsx')
-        value_dims = pd.read_excel('C:/Users/George/Dropbox/R_files/compost-tp/value_dims_compass.xlsx')
-        scale_defs = pd.read_excel('C:/Users/George/Dropbox/R_files/compost-tp/multi-scale_definitions_compass.xlsx')
+        # Create root window and hide it
+        root = tk.Tk()
+        root.withdraw()
+        
+        # Dictionary to store file paths and their descriptions
+        file_requests = [
+            ("Design Process Output", "design_process"),
+            ("Value Dimensions", "value_dimensions"),
+            ("Scale Definitions for Value Dimensions", "scale_definitions")
+        ]
+        
+        files_data = {}
+        
+        # Request each file
+        for desc, file_type in file_requests:
+            while True:
+                filepath = filedialog.askopenfilename(
+                    title=f"Select {desc} file (.xlsx)",
+                    filetypes=[("Excel files", "*.xlsx")]
+                )
+                
+                if not filepath:  # User cancelled
+                    print("File selection cancelled. Exiting program.")
+                    return None, None, None
+                
+                if not filepath.lower().endswith('.xlsx'):
+                    print(f"Error: Please select a valid .xlsx file for {desc}")
+                    continue
+                
+                try:
+                    df = pd.read_excel(filepath)
+                    is_valid, message = validate_file_structure(df, file_type)
+                    
+                    if not is_valid:
+                        print(f"Error: {message}")
+                        continue
+                    
+                    files_data[file_type] = df
+                    break
+                    
+                except Exception as e:
+                    print(f"Error reading {desc} file: {e}")
+                    continue
+        
+        # Process the files as before
+        prompts = files_data["design_process"]
+        value_dims = files_data["value_dimensions"]
+        scale_defs = files_data["scale_definitions"]
         
         # Create dimension-specific scale descriptions
         dimension_scales = {}
         for dimension in value_dims['value dimensions']:
             if dimension in scale_defs.columns:
                 dimension_scales[dimension] = dict(zip(scale_defs['scale_point'], scale_defs[dimension]))
+            else:
+                print(f"Warning: Scale definitions missing for dimension '{dimension}'")
         
         # Convert value dimensions and their definitions to dictionary
         dim_definitions = dict(zip(value_dims['value dimensions'], value_dims['dim_definitions']))
         
         return prompts, dim_definitions, dimension_scales
+        
     except Exception as e:
-        print(f"Error reading Excel files: {e}")
+        print(f"Error processing files: {e}")
         return None, None, None
 
 def create_evaluation_prompt(text, dimension, dim_definition, dimension_scales):
@@ -139,21 +207,44 @@ def main():
     # Calculate summary statistics
     summary = prompts[[col for col in prompts.columns if col.endswith('_Rating')]].agg(['mean', 'std', 'min', 'max'])
     
-    # Create output file
-    output_path = 'C:/Users/George/Dropbox/R_files/compost-tp/tp-results.xlsx'
+    # Create timestamp for filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    default_filename = f"design-process-output-scores_{timestamp}.xlsx"
     
-    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        prompts.to_excel(writer, sheet_name='Evaluations', index=False)
-        summary.to_excel(writer, sheet_name='Summary')
+    # Create root window and hide it (if not already created)
+    root = tk.Tk()
+    root.withdraw()
+    
+    # Prompt user for save location
+    output_path = filedialog.asksaveasfilename(
+        defaultextension=".xlsx",
+        filetypes=[("Excel files", "*.xlsx")],
+        initialfile=default_filename,
+        title="Save Results As"
+    )
+    
+    if not output_path:  # User cancelled
+        print("Save operation cancelled. Exiting program.")
+        return
+    
+    # Save the file
+    try:
+        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            prompts.to_excel(writer, sheet_name='Evaluations', index=False)
+            summary.to_excel(writer, sheet_name='Summary')
+            
+            # Get the column indices and corresponding dimensions for ratings
+            dimension_columns = [(list(prompts.columns).index(col), col.replace('_Rating', '')) 
+                               for col in prompts.columns if col.endswith('_Rating')]
+            
+            # Apply color formatting
+            apply_color_formatting(writer, 'Evaluations', 
+                                 [col for col, _ in dimension_columns], 
+                                 dimension_scales)
+        print(f"Results saved successfully to: {output_path}")
         
-        # Get the column indices and corresponding dimensions for ratings
-        dimension_columns = [(list(prompts.columns).index(col), col.replace('_Rating', '')) 
-                           for col in prompts.columns if col.endswith('_Rating')]
-        
-        # Apply color formatting
-        apply_color_formatting(writer, 'Evaluations', 
-                             [col for col, _ in dimension_columns], 
-                             dimension_scales)
+    except Exception as e:
+        print(f"Error saving results: {e}")
 
 if __name__ == "__main__":
     main()
