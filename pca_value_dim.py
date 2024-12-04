@@ -31,6 +31,8 @@ import seaborn as sns
 from run_pca_naming import generate_pca_names
 from llm_handler import LLMHandler
 from response_parser import ResponseParser
+from sklearn.decomposition import FastICA
+import scipy.stats as stats
 
 print("File loaded, ValueDimensionPCA will be defined at:", __name__)
 
@@ -422,22 +424,79 @@ class ValueDimensionPCA:
             
         return "\n".join(pattern_desc)
 
+class ValueDimensionICA:
+    def __init__(self):
+        self.ica = None
+        self.ica_components = None
+        self.mixing_matrix = None
+        self.convergence_info = None
+        self.kurtosis_scores = None
+        
+    def perform_ica(self, data, n_components=None):
+        """Perform ICA on the data"""
+        try:
+            print("\nPerforming ICA analysis...")
+            if data is None:
+                raise ValueError("No data provided for ICA analysis")
+                
+            # Initialize FastICA
+            self.ica = FastICA(
+                n_components=n_components,
+                random_state=42,
+                max_iter=1000,
+                tol=0.01
+            )
+            
+            # Fit and transform the data
+            print("Fitting ICA model...")
+            self.ica_components = self.ica.fit_transform(data)
+            self.mixing_matrix = self.ica.mixing_
+            
+            # Calculate kurtosis for each component
+            print("Calculating kurtosis scores...")
+            self.kurtosis_scores = [stats.kurtosis(comp) for comp in self.ica_components.T]
+            
+            # Store convergence information
+            self.convergence_info = {
+                'n_iter': self.ica.n_iter_,
+                'converged': self.ica.n_iter_ < 1000  # True if converged before max_iter
+            }
+            
+            print("ICA analysis completed successfully")
+            return True
+            
+        except Exception as e:
+            print(f"Error performing ICA: {str(e)}")
+            return False
+
 # Then, the GUI class
 class ValueDimensionPCAGui(ValueDimensionPCA):
     # Add the PCA class as a class attribute
     PCA_Class = ValueDimensionPCA
     
     def __init__(self):
-        
+        super().__init__()
         self.root = tk.Tk()
-        self.root.title("Value Dimension PCA Analysis")
+        self.root.title("Value Dimension Analysis (PCA & ICA)")
         self.pca_instance = None
+        self.ica_instance = ValueDimensionICA()
         self.ratings_type = tk.StringVar(value="original")
-                
-        # Create button frame
-        self.button_frame = tk.Frame(self.root)
-        self.button_frame.pack(pady=5)
-
+        
+        # Add plot type variables
+        self.pca_plot_type = tk.StringVar(value="scatter")
+        self.ica_plot_type = tk.StringVar(value="scatter")
+        
+        # Create main container for side-by-side analysis
+        self.analysis_frame = ttk.Frame(self.root)
+        self.analysis_frame.pack(fill="both", expand=True)
+        
+        # Create frames for PCA and ICA
+        self.pca_frame = ttk.LabelFrame(self.analysis_frame, text="PCA Analysis")
+        self.pca_frame.pack(side="left", fill="both", expand=True, padx=5)
+        
+        self.ica_frame = ttk.LabelFrame(self.analysis_frame, text="ICA Analysis")
+        self.ica_frame.pack(side="right", fill="both", expand=True, padx=5)
+        
         # Initialize data structures
         self.ratings_paths = []
         self.dims_paths = []
@@ -446,32 +505,104 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
         
         # Create initial widgets
         self.create_initial_widgets()
-        
-        # Create button frame (this should already exist in your code)
-        self.button_frame = tk.Frame(self.root)
-        self.button_frame.pack(pady=5)
 
     def load_data(self):
-        """Handle data loading through the PCA instance"""
+        """Handle data loading for both PCA and ICA"""
         try:
-            # Initialize PCA instance if not already done
+            # Initialize instances if not already done
             if self.pca_instance is None:
                 self.pca_instance = ValueDimensionPCA()
+            if self.ica_instance is None:
+                self.ica_instance = ValueDimensionICA()
             
-            # Call the PCA instance's load_data method with selected files
-            success, message = self.pca_instance.load_data(
+            # Load data for PCA
+            success_pca, message_pca = self.pca_instance.load_data(
                 self.ratings_paths, 
                 self.dims_paths
             )
             
-            if success:
-                messagebox.showinfo("Success", "Data loaded successfully")
-                self.run_button.config(state=tk.NORMAL)
+            if success_pca:
+                # Perform ICA on the same data
+                success_ica = self.ica_instance.perform_ica(
+                    self.pca_instance.current_ratings
+                )
+                
+                if success_ica:
+                    messagebox.showinfo("Success", "Data loaded and analyzed successfully")
+                    self.run_button.config(state=tk.NORMAL)
+                else:
+                    messagebox.showerror("Error", "ICA analysis failed")
             else:
-                messagebox.showerror("Error", f"Failed to load data: {message}")
+                messagebox.showerror("Error", f"Failed to load data: {message_pca}")
                 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load data: {str(e)}")
+
+    def show_visualization(self, pca):
+        """Modified to show both PCA and ICA visualizations"""
+        try:
+            print("Creating visualization window...")
+            if not hasattr(self, 'viz_window'):
+                self.viz_window = tk.Toplevel(self.root)
+                self.viz_window.title("Analysis Visualization")
+            
+            # Create main scrollable container
+            main_canvas = tk.Canvas(self.viz_window)
+            scrollbar = ttk.Scrollbar(self.viz_window, orient="vertical", command=main_canvas.yview)
+            scrollable_frame = ttk.Frame(main_canvas)
+            
+            # Configure scrolling
+            scrollable_frame.bind(
+                "<Configure>",
+                lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+            )
+            main_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+            main_canvas.configure(yscrollcommand=scrollbar.set)
+            
+            # Create side-by-side frames
+            pca_viz_frame = ttk.LabelFrame(scrollable_frame, text="PCA Results")
+            pca_viz_frame.pack(side="left", fill="both", expand=True, padx=5)
+            
+            ica_viz_frame = ttk.LabelFrame(scrollable_frame, text="ICA Results")
+            ica_viz_frame.pack(side="right", fill="both", expand=True, padx=5)
+            
+            # Store instances
+            self.pca_instance = pca
+            
+            # Create controls and panels for both analyses
+            self.create_visualization_controls(pca_viz_frame, analysis_type="pca")
+            self.create_visualization_controls(ica_viz_frame, analysis_type="ica")
+            
+            self.create_summary_panel(pca_viz_frame, analysis_type="pca")
+            self.create_summary_panel(ica_viz_frame, analysis_type="ica")
+            
+            # Create figure frames
+            self.pca_fig_frame = ttk.Frame(pca_viz_frame)
+            self.pca_fig_frame.pack(fill="both", expand=True, pady=5)
+            
+            self.ica_fig_frame = ttk.Frame(ica_viz_frame)
+            self.ica_fig_frame.pack(fill="both", expand=True, pady=5)
+            
+            # Update displays
+            self.update_summary(analysis_type="pca")
+            self.update_summary(analysis_type="ica")
+            self.update_plot(self.pca_instance)
+            
+            # Pack scrollbar and canvas
+            scrollbar.pack(side="right", fill="y")
+            main_canvas.pack(side="left", fill="both", expand=True)
+            
+            # Configure window size
+            self.viz_window.geometry("1600x800")  # Wider to accommodate both analyses
+            
+            # Enable mouse wheel scrolling
+            def _on_mousewheel(event):
+                main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            main_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            
+        except Exception as e:
+            print(f"Error in show_visualization: {str(e)}")
+            raise
 
     def create_initial_widgets(self):
         # File count frame
@@ -651,7 +782,7 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             return False
 
     def proceed(self):
-        """Modified proceed method"""
+        """Modified proceed method to ensure ICA is performed"""
         try:
             print("Starting proceed method...")
             
@@ -664,6 +795,12 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             if not self.pca_instance.perform_pca():
                 messagebox.showerror("Error", "PCA calculation failed")
                 return
+                
+            # Perform ICA
+            print("Performing ICA...")
+            if not self.ica_instance.perform_ica(self.pca_instance.current_ratings):
+                messagebox.showerror("Error", "ICA calculation failed")
+                return
             
             # Show visualization with toggle option
             print("Showing visualization...")
@@ -673,305 +810,272 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             print(f"Error in proceed: {str(e)}")
             messagebox.showerror("Error", f"Error processing files: {str(e)}")
     
-    def show_visualization(self, pca):
-        """Modified show_visualization to include scrollable frame"""
+    def create_summary_panel(self, parent, analysis_type="pca"):
+        """Create summary panel for both PCA and ICA results"""
         try:
-            print("Creating visualization window...")
-            if not hasattr(self, 'viz_window'):
-                self.viz_window = tk.Toplevel(self.root)
-                self.viz_window.title("PCA Visualization")
+            title = "PCA Summary" if analysis_type == "pca" else "ICA Summary"
+            summary_frame = ttk.LabelFrame(parent, text=title, padding="10")
+            summary_frame.pack(fill="x", padx=10, pady=5)
+
+            # Create text widget for summary
+            text_widget = tk.Text(summary_frame, height=15, width=60)
+            text_widget.pack(fill="both", expand=True)
             
-            # Create main scrollable container
-            main_canvas = tk.Canvas(self.viz_window)
-            scrollbar = ttk.Scrollbar(self.viz_window, orient="vertical", command=main_canvas.yview)
-            scrollable_frame = ttk.Frame(main_canvas)
-            
-            # Configure scrolling
-            scrollable_frame.bind(
-                "<Configure>",
-                lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all"))
-            )
-            main_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-            main_canvas.configure(yscrollcommand=scrollbar.set)
-            
-            # Store PCA instance
-            print("Storing PCA instance...")
-            self.pca_instance = pca
-            
-            # Create controls and panels within scrollable frame
-            print("Creating UI elements...")
-            self.create_visualization_controls(scrollable_frame)
-            self.create_summary_panel(scrollable_frame)
-            
-            # Create figure frame
-            print("Creating figure frame...")
-            self.fig_frame = ttk.Frame(scrollable_frame)
-            self.fig_frame.pack(fill="both", expand=True, pady=5)
-            
-            # Update displays
-            print("Updating displays...")
-            self.update_summary()
-            self.update_plot(self.pca_instance)
-            
-            # Pack scrollbar and canvas
+            # Add scrollbar
+            scrollbar = ttk.Scrollbar(summary_frame, orient="vertical", command=text_widget.yview)
             scrollbar.pack(side="right", fill="y")
-            main_canvas.pack(side="left", fill="both", expand=True)
+            text_widget.configure(yscrollcommand=scrollbar.set)
+
+            # Store text widget reference
+            setattr(self, f"{analysis_type}_summary_text", text_widget)
+
+            # Add component naming section
+            names_frame = ttk.Frame(summary_frame)
+            names_frame.pack(fill="x", pady=5)
             
-            # Configure window size
-            self.viz_window.geometry("1000x800")
+            # Add status label
+            status_label = ttk.Label(
+                names_frame,
+                text="Ready to generate names",
+                foreground="gray"
+            )
+            status_label.pack(pady=2)
+            setattr(self, f"{analysis_type}_status_label", status_label)
             
-            # Enable mouse wheel scrolling
-            def _on_mousewheel(event):
-                main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-            main_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            # Generate Names button
+            name_gen_button = ttk.Button(
+                names_frame,
+                text=f"Generate {analysis_type.upper()} Names",
+                command=lambda: self.generate_component_names(analysis_type)
+            )
+            name_gen_button.pack(pady=5)
+            setattr(self, f"{analysis_type}_name_gen_button", name_gen_button)
             
-            print("Visualization setup complete")
-            
+            # Text widget for displaying generated names
+            names_text = tk.Text(summary_frame, height=10, width=60)
+            names_text.pack(fill="both", expand=True)
+            names_text.pack_forget()  # Initially hidden
+            setattr(self, f"{analysis_type}_names_text", names_text)
+
         except Exception as e:
-            print(f"Error in show_visualization: {str(e)}")
-            print(f"Debug info:")
-            print(f"- PCA instance available: {hasattr(self, 'pca_instance')}")
-            print(f"- Plot controls initialized: {hasattr(self, 'pc_x') and hasattr(self, 'pc_y') and hasattr(self, 'plot_type')}")
+            print(f"Error creating summary panel: {str(e)}")
             raise
-    
-    def create_summary_panel(self, parent):
-        """Create PCA results summary panel"""
-        summary_frame = ttk.LabelFrame(parent, text="PCA Summary", padding="10")
-        summary_frame.pack(fill="x", padx=10, pady=5)
 
-        # Threshold selector
-        threshold_frame = ttk.Frame(summary_frame)
-        threshold_frame.pack(fill="x", pady=5)
-        ttk.Label(threshold_frame, text="Variance explained threshold (%):").pack(side="left")
-        self.variance_threshold = tk.StringVar(value="80")
-        threshold_entry = ttk.Entry(threshold_frame, textvariable=self.variance_threshold, width=5)
-        threshold_entry.pack(side="left", padx=5)
-        ttk.Button(threshold_frame, text="Update", command=self.update_summary).pack(side="left", padx=5)
-
-        # Create text widget for summary
-        self.summary_text = tk.Text(summary_frame, height=15, width=60)
-        self.summary_text.pack(fill="both", expand=True)
-        
-        # Add scrollbar
-        scrollbar = ttk.Scrollbar(summary_frame, orient="vertical", command=self.summary_text.yview)
-        scrollbar.pack(side="right", fill="y")
-        self.summary_text.configure(yscrollcommand=scrollbar.set)
-
-        # Add PC Names section
-        names_frame = ttk.Frame(summary_frame)
-        names_frame.pack(fill="x", pady=5)
-        
-        # Add status label for name generation
-        self.status_label = ttk.Label(
-            names_frame,
-            text="Ready to generate names",
-            foreground="gray"
-        )
-        self.status_label.pack(pady=2)
-        
-        # Generate Names button
-        self.name_gen_button = ttk.Button(
-            names_frame,
-            text="Generate PC Names",
-            command=self.generate_pc_names
-        )
-        self.name_gen_button.pack(pady=5)
-        
-        # Text widget for displaying generated names
-        self.names_text = tk.Text(summary_frame, height=10, width=60)
-        self.names_text.pack(fill="both", expand=True)
-        self.names_text.pack_forget()  # Initially hidden
-        
-        # Add scrollbar for names
-        names_scrollbar = ttk.Scrollbar(summary_frame, orient="vertical", command=self.names_text.yview)
-        names_scrollbar.pack(side="right", fill="y")
-        names_scrollbar.pack_forget()  # Initially hidden
-        self.names_text.configure(yscrollcommand=names_scrollbar.set)
-
-    def update_summary(self):
-        """Update PCA summary with current results"""
+    def update_summary(self, analysis_type="pca"):
+        """Update summary with current results"""
         try:
-            print("\nDEBUG: Starting summary update")
+            # Get appropriate text widget
+            text_widget = getattr(self, f"{analysis_type}_summary_text")
+            text_widget.delete(1.0, tk.END)
             
-            # Check if PCA instance exists
-            if not hasattr(self, 'pca_instance'):
-                print("No PCA instance found")
-                return
-            print("PCA instance found")
-            
-            # Check if PCA object exists
-            if not hasattr(self.pca_instance, 'pca'):
-                print("No PCA object found in instance")
-                return
-            print("PCA object found")
-            
-            # Debug print for original_dims
-            print(f"Original dims type: {type(self.pca_instance.original_dims)}")
-            print(f"Original dims value: {self.pca_instance.original_dims}")
-            
-            # Clear existing text
-            if not hasattr(self, 'summary_text'):
-                print("No summary_text widget found")
-                return
-            self.summary_text.delete(1.0, tk.END)
-            
-            # Get threshold (with error checking)
-            try:
-                threshold = float(self.variance_threshold.get()) / 100
-            except (ValueError, AttributeError):
-                threshold = 0.8  # default to 80%
-            print(f"Using threshold: {threshold}")
-
-            # Data preprocessing info
-            self.summary_text.insert(tk.END, "Data Preprocessing:\n", "heading")
-            self.summary_text.insert(tk.END, "- Standardization: StandardScaler\n")
-            
-            # Add dimension variance contributions
-            variance_contributions = self.pca_instance.calculate_dimension_variance()
-            if variance_contributions is not None:
-                self.summary_text.insert(tk.END, "\nVariance Contribution by Dimension:\n", "heading")
-                # Sort dimensions by contribution
-                sorted_contributions = variance_contributions.sort_values(ascending=False)
-                for dim, contrib in sorted_contributions.items():
-                    self.summary_text.insert(tk.END, f"- {dim}: {contrib:.2f}%\n")
-                self.summary_text.insert(tk.END, "\n")
-            
-            # Debug print for components
-            print(f"Components type: {type(self.pca_instance.pca.components_)}")
-            print(f"Components shape: {self.pca_instance.pca.components_.shape}")
-            
-            # Debug print for explained variance
-            print(f"Explained variance type: {type(self.pca_instance.pca.explained_variance_ratio_)}")
-            print(f"Explained variance shape: {self.pca_instance.pca.explained_variance_ratio_.shape}")
-            
-            # Add input dimensions info with explicit type checking
-            if hasattr(self.pca_instance, 'original_dims'):
-                dims = self.pca_instance.original_dims
-                if dims is not None:
-                    try:
-                        n_dims = len(dims)
-                        self.summary_text.insert(tk.END, f"- Input dimensions: {n_dims}\n")
-                    except TypeError:
-                        print(f"Could not get length of original_dims: {dims}")
-            
-            self.summary_text.insert(tk.END, 
-                f"- Data type: {'Cosine Similarity' if self.ratings_type.get() == 'cosine' else 'Original Ratings'}\n\n")
-
-            # Check for explained variance ratios
-            if hasattr(self.pca_instance.pca, 'explained_variance_ratio_'):
-                print("Adding explained variance information")
-                self.summary_text.insert(tk.END, "Explained Variance by Component:\n", "heading")
-                var_ratios = self.pca_instance.pca.explained_variance_ratio_
-                cumulative = np.cumsum(var_ratios)
+            if analysis_type == "pca":
+                self.update_pca_summary(text_widget)
+            else:
+                self.update_ica_summary(text_widget)
                 
-                for i, (var, cum) in enumerate(zip(var_ratios, cumulative), 1):
-                    self.summary_text.insert(tk.END, 
-                        f"PC{i}: {var:.3f} ({cum:.3f} cumulative)\n")
-
-                # Components needed for threshold
-                n_components = np.sum(cumulative <= threshold) + 1
-                self.summary_text.insert(tk.END, 
-                    f"\nComponents needed for {threshold*100}% variance: {n_components}\n\n")
-
-            # Check for components/loadings
-            if hasattr(self.pca_instance.pca, 'components_'):
-                print("Adding component loadings information")
-                self.summary_text.insert(tk.END, "Top Component Loadings:\n", "heading")
-                loadings = self.pca_instance.pca.components_
-                
-                if hasattr(self.pca_instance, 'original_dims'):
-                    # For each component, show top contributing dimensions
-                    for i in range(min(3, len(loadings))):  # Show first 3 components
-                        self.summary_text.insert(tk.END, f"\nPrincipal Component {i+1}:\n")
-                        # Get indices of top absolute loadings
-                        top_indices = np.abs(loadings[i]).argsort()[-5:][::-1]  # Top 5
-                        for idx in top_indices:
-                            dim_name = self.pca_instance.original_dims[idx]
-                            loading = loadings[i][idx]
-                            self.summary_text.insert(tk.END, 
-                                f"  {dim_name}: {loading:.3f}\n")
-
-            # Software info
-            self.summary_text.insert(tk.END, "\nSoftware Information:\n", "heading")
-            self.summary_text.insert(tk.END, "- scikit-learn PCA\n")
-            self.summary_text.insert(tk.END, "- pandas DataFrame\n")
-            self.summary_text.insert(tk.END, "- numpy arrays\n")
-
-            # Apply tags for formatting
-            self.summary_text.tag_configure("heading", font=("TkDefaultFont", 10, "bold"))
-            
-            print("Summary update completed successfully")
-            
         except Exception as e:
             print(f"Error updating summary: {str(e)}")
-            print("Debug information:")
-            print(f"- PCA instance exists: {hasattr(self, 'pca_instance')}")
-            if hasattr(self, 'pca_instance'):
-                print(f"- PCA object exists: {hasattr(self.pca_instance, 'pca')}")
-                if hasattr(self.pca_instance, 'pca'):
-                    print(f"- Components exist: {hasattr(self.pca_instance.pca, 'components_')}")
-                    print(f"- Original dims exist: {hasattr(self.pca_instance, 'original_dims')}")
-                    if hasattr(self.pca_instance, 'original_dims'):
-                        print(f"- Original dims value: {self.pca_instance.original_dims}")
-            messagebox.showerror("Error", f"Failed to update summary: {str(e)}")
+            raise
 
-    def create_visualization_controls(self, parent):
-        """Update visualization controls to include heatmap option"""
+    def update_ica_summary(self, text_widget):
+        """Update ICA-specific summary information"""
         try:
-            print("Creating control frame...")
+            # Clear existing text
+            text_widget.delete(1.0, tk.END)
+            
+            # Check if ICA instance exists and has been fitted
+            if not hasattr(self, 'ica_instance') or self.ica_instance is None:
+                text_widget.insert(tk.END, "ICA analysis has not been performed yet.\n")
+                return
+            
+            # Data preprocessing info
+            text_widget.insert(tk.END, "Data Preprocessing:\n", "heading")
+            text_widget.insert(tk.END, "- Standardization: StandardScaler\n")
+            text_widget.insert(tk.END, f"- Input dimensions: {len(self.pca_instance.original_dims)}\n\n")
+
+            # Convergence information (with checks)
+            text_widget.insert(tk.END, "Convergence Information:\n", "heading")
+            if hasattr(self.ica_instance, 'convergence_info') and self.ica_instance.convergence_info:
+                conv_info = self.ica_instance.convergence_info
+                text_widget.insert(tk.END, f"- Iterations: {conv_info.get('n_iter', 'N/A')}\n")
+                text_widget.insert(tk.END, f"- Converged: {conv_info.get('converged', 'N/A')}\n\n")
+            else:
+                text_widget.insert(tk.END, "- Convergence information not available\n\n")
+
+            # Kurtosis information (with checks)
+            text_widget.insert(tk.END, "Component Kurtosis:\n", "heading")
+            if hasattr(self.ica_instance, 'kurtosis_scores') and self.ica_instance.kurtosis_scores is not None:
+                for i, kurt in enumerate(self.ica_instance.kurtosis_scores):
+                    text_widget.insert(tk.END, f"IC{i+1}: {kurt:.3f}\n")
+            else:
+                text_widget.insert(tk.END, "- Kurtosis information not available\n")
+            text_widget.insert(tk.END, "\n")
+
+            # Mixing matrix information (with checks)
+            text_widget.insert(tk.END, "Mixing Matrix Statistics:\n", "heading")
+            if hasattr(self.ica_instance, 'mixing_matrix') and self.ica_instance.mixing_matrix is not None:
+                mixing_matrix = self.ica_instance.mixing_matrix
+                text_widget.insert(tk.END, f"- Shape: {mixing_matrix.shape}\n")
+                text_widget.insert(tk.END, f"- Mean: {np.mean(mixing_matrix):.3f}\n")
+                text_widget.insert(tk.END, f"- Std: {np.std(mixing_matrix):.3f}\n")
+                text_widget.insert(tk.END, f"- Max: {np.max(mixing_matrix):.3f}\n")
+                text_widget.insert(tk.END, f"- Min: {np.min(mixing_matrix):.3f}\n\n")
+            else:
+                text_widget.insert(tk.END, "- Mixing matrix information not available\n\n")
+
+            # Software information
+            text_widget.insert(tk.END, "Software Information:\n", "heading")
+            text_widget.insert(tk.END, "- scikit-learn FastICA\n")
+            text_widget.insert(tk.END, "- pandas DataFrame\n")
+            text_widget.insert(tk.END, "- numpy arrays\n")
+
+            # Apply tags for formatting
+            text_widget.tag_configure("heading", font=("TkDefaultFont", 10, "bold"))
+            
+        except Exception as e:
+            print(f"Error updating ICA summary: {str(e)}")
+            text_widget.insert(tk.END, f"Error updating ICA summary: {str(e)}\n")
+
+    def generate_component_names(self, analysis_type="pca"):
+        """Generate names for components using run_pca_naming module"""
+        try:
+            # Update status
+            status_label = getattr(self, f"{analysis_type}_status_label")
+            status_label.config(text="Generating component names...")
+            self.root.update()
+
+            # Get appropriate instance and components
+            if analysis_type == "pca":
+                instance = self.pca_instance
+                # Format PCA results as expected by generate_pca_names
+                pca_results = {}
+                for i, comp in enumerate(instance.pca.components_):
+                    # Get indices of top dimensions (both positive and negative)
+                    sorted_indices = abs(comp).argsort()[::-1]
+                    top_dims = [instance.original_dims[idx] for idx in sorted_indices[:5]]
+                    
+                    # Separate high and low loading prompts
+                    high_indices = comp.argsort()[::-1][:5]
+                    low_indices = comp.argsort()[:5]
+                    
+                    pca_results[f'pc_{i+1}_top_dims'] = ', '.join(map(str, top_dims))
+                    pca_results[f'pc_{i+1}_high_prompts'] = ', '.join([instance.original_dims[idx] for idx in high_indices])
+                    pca_results[f'pc_{i+1}_low_prompts'] = ', '.join([instance.original_dims[idx] for idx in low_indices])
+
+            # Convert prompts to DataFrame as expected by generate_pca_names
+            prompts_df = pd.DataFrame({'prompt': instance.original_dims})
+
+            print("Debug info before generate_pca_names:")
+            print(f"PCA results keys: {pca_results.keys()}")
+            print(f"Prompts DataFrame shape: {prompts_df.shape}")
+
+            # Import generate_pca_names function
+            from run_pca_naming import generate_pca_names
+
+            # Get results from name generation
+            results = generate_pca_names(
+                pca_results=pca_results,
+                prompts_df=prompts_df,
+                n_components=min(8, len(instance.pca.components_))
+            )
+
+            if results is not None:
+                self.display_component_names(results, analysis_type)
+                messagebox.showinfo(
+                    "Success", 
+                    f"Generated names for {len(results)} {analysis_type.upper()} components"
+                )
+            else:
+                messagebox.showerror(
+                    "Error", 
+                    f"Failed to generate {analysis_type.upper()} component names"
+                )
+
+        except Exception as e:
+            print(f"Error generating component names: {str(e)}")
+            print("Debug info:")
+            print(f"Analysis type: {analysis_type}")
+            if hasattr(self.pca_instance, 'pca'):
+                print(f"PCA components shape: {self.pca_instance.pca.components_.shape}")
+            print(f"Original dims type: {type(self.pca_instance.original_dims)}")
+            if 'results' in locals():
+                print(f"Results type: {type(results)}")
+                print(f"Results content: {results}")
+            messagebox.showerror("Error", f"Name generation failed: {str(e)}")
+        finally:
+            status_label.config(text="Ready")
+
+    def create_visualization_controls(self, parent, analysis_type="pca"):
+        """Update visualization controls to handle both PCA and ICA"""
+        try:
+            print(f"Creating control frame for {analysis_type.upper()}...")
             control_frame = ttk.Frame(parent)
             control_frame.pack(fill="x", padx=10, pady=5)
             
-            # Ratings type toggle
-            print("Creating ratings toggle...")
-            ratings_frame = ttk.LabelFrame(control_frame, text="Ratings Type", padding="5")
-            ratings_frame.pack(fill="x", pady=5)
-            
-            ttk.Radiobutton(
-                ratings_frame,
-                text="Original Ratings",
-                variable=self.ratings_type,
-                value="original",
-                command=self.update_ratings_type
-            ).pack(side="left", padx=5)
-            
-            ttk.Radiobutton(
-                ratings_frame,
-                text="Cosine Similarity Scores",
-                variable=self.ratings_type,
-                value="cosine",
-                command=self.update_ratings_type
-            ).pack(side="left", padx=5)
+            # Ratings type toggle (only for PCA)
+            if analysis_type == "pca":
+                print("Creating ratings toggle...")
+                ratings_frame = ttk.LabelFrame(control_frame, text="Ratings Type", padding="5")
+                ratings_frame.pack(fill="x", pady=5)
+                
+                ttk.Radiobutton(
+                    ratings_frame,
+                    text="Original Ratings",
+                    variable=self.ratings_type,
+                    value="original",
+                    command=self.update_ratings_type
+                ).pack(side="left", padx=5)
+                
+                ttk.Radiobutton(
+                    ratings_frame,
+                    text="Cosine Similarity Scores",
+                    variable=self.ratings_type,
+                    value="cosine",
+                    command=self.update_ratings_type
+                ).pack(side="left", padx=5)
             
             # Plot controls
             print("Creating plot controls...")
             plot_controls = ttk.LabelFrame(control_frame, text="Plot Controls", padding="5")
             plot_controls.pack(fill="x", pady=5)
             
-            # PC selection (only needed for scatter plot)
-            self.pc_x = tk.StringVar(value="1")
-            self.pc_y = tk.StringVar(value="2")
+            # Component selection
+            if analysis_type == "pca":
+                self.pc_x = tk.StringVar(value="1")
+                self.pc_y = tk.StringVar(value="2")
+                prefix = "PC"
+                plot_type_var = self.pca_plot_type
+            else:
+                self.ic_x = tk.StringVar(value="1")
+                self.ic_y = tk.StringVar(value="2")
+                prefix = "IC"
+                plot_type_var = self.ica_plot_type
             
-            ttk.Label(plot_controls, text="PC X:").pack(side="left", padx=5)
-            ttk.Entry(plot_controls, textvariable=self.pc_x, width=3).pack(side="left")
-            ttk.Label(plot_controls, text="PC Y:").pack(side="left", padx=5)
-            ttk.Entry(plot_controls, textvariable=self.pc_y, width=3).pack(side="left")
+            x_var = self.pc_x if analysis_type == "pca" else self.ic_x
+            y_var = self.pc_y if analysis_type == "pca" else self.ic_y
+            
+            ttk.Label(plot_controls, text=f"{prefix} X:").pack(side="left", padx=5)
+            ttk.Entry(plot_controls, textvariable=x_var, width=3).pack(side="left")
+            ttk.Label(plot_controls, text=f"{prefix} Y:").pack(side="left", padx=5)
+            ttk.Entry(plot_controls, textvariable=y_var, width=3).pack(side="left")
             
             # Point size control
             self.point_size = tk.StringVar(value="50")
             ttk.Label(plot_controls, text="Point Size:").pack(side="left", padx=5)
             ttk.Entry(plot_controls, textvariable=self.point_size, width=4).pack(side="left")
             
-            # Update plot type selection
-            self.plot_type = tk.StringVar(value="scatter")
-            plot_types = ["scatter", "matrix", "heatmap"]  # Added heatmap option
+            # Plot type selection
+            plot_types = ["scatter", "matrix", "heatmap"]
+            if analysis_type == "ica":
+                plot_types.extend(["kurtosis", "signals", "mixing"])
+            
             for plot_type in plot_types:
                 ttk.Radiobutton(
                     plot_controls,
                     text=plot_type.capitalize(),
-                    variable=self.plot_type,
+                    variable=plot_type_var,
                     value=plot_type,
-                    command=lambda: self.update_plot(self.pca_instance)
+                    command=lambda t=analysis_type: self.update_plot(t)
                 ).pack(side="left", padx=5)
             
             print("Control frame created successfully")
@@ -979,392 +1083,411 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
         except Exception as e:
             print(f"Error creating visualization controls: {str(e)}")
             raise
-    
-    def update_plot(self, pca):
-        """Update visualization based on current settings"""
+
+    def update_plot(self, analysis_type):
+        """Update visualization based on current settings and analysis type"""
         try:
-            plot_type = self.plot_type.get()
+            # Get plot type using the correct attribute name
+            plot_type = self.pca_plot_type.get() if analysis_type == "pca" else self.ica_plot_type.get()
             
             # Clear previous plot
-            for widget in self.fig_frame.winfo_children():
+            frame = self.pca_fig_frame if analysis_type == "pca" else self.ica_fig_frame
+            for widget in frame.winfo_children():
                 widget.destroy()
             
-            if plot_type == "matrix":
-                self.create_matrix_plot(pca)
-            elif plot_type == "heatmap":
-                self.create_heatmap_plot(pca)
-            else:  # scatter
-                pc1 = int(self.pc_x.get()) - 1
-                pc2 = int(self.pc_y.get()) - 1
-                self.create_scatter_plot(pca, pc1, pc2)
+            if analysis_type == "pca":
+                if plot_type == "matrix":
+                    self.create_matrix_plot(self.pca_instance)
+                elif plot_type == "heatmap":
+                    self.create_heatmap_plot(self.pca_instance)
+                else:  # scatter
+                    pc1 = int(self.pc_x.get()) - 1
+                    pc2 = int(self.pc_y.get()) - 1
+                    self.create_scatter_plot(self.pca_instance, pc1, pc2)
+            else:  # ICA
+                if plot_type == "matrix":
+                    self.create_ica_matrix_plot()
+                elif plot_type == "heatmap":
+                    self.create_ica_mixing_heatmap()
+                elif plot_type == "kurtosis":
+                    self.create_kurtosis_plot()
+                elif plot_type == "signals":
+                    self.create_signal_plot()
+                else:  # scatter
+                    ic1 = int(self.ic_x.get()) - 1
+                    ic2 = int(self.ic_y.get()) - 1
+                    self.create_ica_scatter_plot(ic1, ic2)
                 
         except Exception as e:
             print(f"Error updating plot: {str(e)}")
             messagebox.showerror("Error", f"Error updating plot: {str(e)}")
-    
+
     def run(self):
-        self.root.mainloop()
-
-
-    
-
-    def create_scatter_plot(self, pca, pc1, pc2):
-        """Create scatter plot of PCA results"""
+        """Main method to run the application"""
         try:
-            # Get point size with error handling
-            try:
-                point_size = float(self.point_size.get())
-            except (ValueError, AttributeError):
-                point_size = 50  # default size if there's an error
-                
-            # Create the scatter plot
-            plt.figure(figsize=(10, 8))
-            plt.scatter(
-                pca.pca_ratings[:, pc1],
-                pca.pca_ratings[:, pc2],
-                s=point_size,
-                alpha=0.6
+            print("\nStarting Value Dimension Analysis application...")
+            
+            # Initialize logging
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(levelname)s - %(message)s'
             )
+            logging.info("Application started")
             
-            # Add labels
-            plt.xlabel(f'Principal Component {pc1 + 1}')
-            plt.ylabel(f'Principal Component {pc2 + 1}')
-            plt.title('PCA Results')
+            # Set error handling
+            def handle_exception(exc_type, exc_value, exc_traceback):
+                logging.error("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+                messagebox.showerror("Error", f"An unexpected error occurred: {str(exc_value)}")
             
-            # Add grid
-            plt.grid(True, linestyle='--', alpha=0.7)
+            sys.excepthook = handle_exception
             
-            # Show plot
-            plt.tight_layout()
-            
-            # If we have a previous plot, clear it
-            if hasattr(self, 'canvas'):
-                self.canvas.get_tk_widget().destroy()
-            
-            # Create new canvas
-            self.canvas = FigureCanvasTkAgg(plt.gcf(), master=self.fig_frame)
-            self.canvas.draw()
-            self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            # Run the main loop
+            self.root.mainloop()
             
         except Exception as e:
-            print(f"Error creating scatter plot: {str(e)}")
+            logging.error(f"Error in main run method: {str(e)}")
             raise
+        finally:
+            logging.info("Application closed")
 
-    def create_matrix_plot(self, pca):
-        """Create 3x3 interactive scatterplot matrix of top 3 PCs"""
+    def perform_analysis(self):
+        """Perform both PCA and ICA analysis"""
         try:
-            print("Creating matrix plot...")
+            print("\nPerforming analysis...")
             
-            # Create 3x3 subplot figure
-            fig = make_subplots(
-                rows=3, cols=3,
-                subplot_titles=[f'PC{i+1} vs PC{j+1}' for i in range(3) for j in range(3)]
-            )
+            # Perform PCA
+            if not self.pca_instance.perform_pca():
+                raise Exception("PCA analysis failed")
             
-            # Get top 3 PCs
-            pc_data = pca.pca_ratings[:, :3]
+            # Perform ICA
+            if not self.ica_instance.perform_ica(self.pca_instance.current_ratings):
+                raise Exception("ICA analysis failed")
             
-            # Create scatterplots for each combination
-            for i in range(3):
-                for j in range(3):
-                    # Get data for current plot
-                    x = pc_data[:, i]
-                    y = pc_data[:, j]
-                    
-                    # Create hover text
-                    hover_text = [f"Prompt: {prompt}<br>PC{i+1}: {x_val:.3f}<br>PC{j+1}: {y_val:.3f}" 
-                                for prompt, x_val, y_val in zip(pca.prompts.values(), x, y)]
-                    
-                    # Add scatter plot
-                    fig.add_trace(
-                        go.Scatter(
-                            x=x,
-                            y=y,
-                            mode='markers',
-                            marker=dict(size=8),
-                            hovertext=hover_text,
-                            hoverinfo='text',
-                            showlegend=False
-                        ),
-                        row=i+1, col=j+1
-                    )
-                    
-                    # Update axes labels
-                    fig.update_xaxes(title_text=f'PC{i+1}', row=i+1, col=j+1)
-                    fig.update_yaxes(title_text=f'PC{j+1}', row=i+1, col=j+1)
+            # Show visualizations
+            self.show_visualization(self.pca_instance)
             
-            # Update layout
-            fig.update_layout(
-                height=800,
-                width=800,
-                title='PCA Components Matrix Plot',
-                showlegend=False,
-                template='plotly_white'
-            )
-            
-            # If we have a previous plot, clear it
-            if hasattr(self, 'matrix_frame'):
-                self.matrix_frame.destroy()
-            
-            # Create frame for the plot
-            self.matrix_frame = ttk.Frame(self.fig_frame)
-            self.matrix_frame.pack(fill=tk.BOTH, expand=True)
-            
-            # Generate HTML and create a temporary file
-            html_path = "pca_matrix_plot.html"
-            pyo.plot(fig, filename=html_path, auto_open=False)
-            
-            # Create button to open plot in browser
-            ttk.Button(
-                self.matrix_frame,
-                text="Open Interactive Plot in Browser",
-                command=lambda: webbrowser.open(html_path)
-            ).pack(pady=10)
-            
-            # Also display a static message
-            ttk.Label(
-                self.matrix_frame,
-                text="Click the button above to view the interactive plot in your browser"
-            ).pack(pady=5)
-            
-            print("Matrix plot created successfully")
+            print("Analysis completed successfully")
+            return True
             
         except Exception as e:
-            print(f"Error creating matrix plot: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            print(f"Error performing analysis: {str(e)}")
+            messagebox.showerror("Error", f"Analysis failed: {str(e)}")
+            return False
+
+    def display_component_names(self, results_df, analysis_type="pca"):
+        """Display the generated names in the GUI"""
+        try:
+            # Get appropriate text widget
+            names_text = getattr(self, f"{analysis_type}_names_text")
+            names_text.pack(fill="both", expand=True)  # Make visible
+            names_text.config(state="normal")  # Allow editing temporarily
+            names_text.delete(1.0, tk.END)
+            
+            # Display results
+            prefix = "PC" if analysis_type == "pca" else "IC"
+            for _, row in results_df.iterrows():
+                # Component number
+                comp_num = row.get('component_number', row.get('pc_num', '?'))
+                
+                # Component name and description
+                name = row.get('component_name', row.get('name', 'Unnamed Component'))
+                description = row.get('description', row.get('explanation', 'No description available'))
+                
+                # Format and insert the component information
+                names_text.insert(tk.END, f"\n{prefix} {comp_num}:", "bold")
+                names_text.insert(tk.END, f" {name}\n", "bold")
+                names_text.insert(tk.END, f"{description}\n")
+                
+                # Add loadings if available
+                loadings = row.get('top_loadings', row.get('top_vars', []))
+                if loadings:
+                    names_text.insert(tk.END, "\nTop contributing variables:\n", "italic")
+                    for loading in loadings:
+                        names_text.insert(tk.END, f"- {loading}\n")
+                
+                names_text.insert(tk.END, "\n" + "-"*50 + "\n")
+            
+            # Configure tags
+            names_text.tag_configure("bold", font=("TkDefaultFont", 10, "bold"))
+            names_text.tag_configure("italic", font=("TkDefaultFont", 10, "italic"))
+            
+            # Make text widget read-only
+            names_text.config(state="disabled")
+            
+        except Exception as e:
+            print(f"Error displaying component names: {str(e)}")
             raise
 
     def update_ratings_type(self):
-        """Handle ratings type selection"""
+        """Update the current ratings based on user selection"""
         try:
-            print(f"\nDEBUG: Updating ratings type to: {self.ratings_type.get()}")
+            print(f"\nUpdating ratings type to: {self.ratings_type.get()}")
             
-            if not hasattr(self, 'pca_instance'):
-                print("No PCA instance available")
-                return
-            
-            if self.ratings_type.get() == "original":
-                print("Switching to original ratings")
-                self.pca_instance.current_ratings = self.pca_instance.ratings_data
-            else:
-                print("Switching to cosine similarity ratings")                                
+            # Update current ratings based on selection
+            if self.ratings_type.get() == "cosine":
                 self.pca_instance.current_ratings = self.pca_instance.cosine_ratings
-            
-            # Update PCA with new ratings
-            print("Performing PCA with updated ratings")
-            if self.pca_instance.perform_pca():
-                print("PCA completed successfully")
-                if hasattr(self, 'update_plot'):
-                    print("Updating visualization")
-                    self.update_plot(self.pca_instance)
+                print("Using cosine similarity ratings")
             else:
-                print("PCA calculation failed")
-                messagebox.showerror("Error", "Failed to update PCA calculation")
+                self.pca_instance.current_ratings = self.pca_instance.ratings_data
+                print("Using original ratings")
             
+            # Rerun PCA with new ratings
+            if self.pca_instance.perform_pca():
+                # Update visualizations
+                self.update_summary(analysis_type="pca")
+                self.update_plot("pca")
+                print("Successfully updated analysis with new ratings")
+            else:
+                messagebox.showerror("Error", "Failed to update PCA with new ratings")
+                
         except Exception as e:
             print(f"Error updating ratings type: {str(e)}")
-            messagebox.showerror("Error", f"Failed to update ratings type: {str(e)}")
-            self.ratings_type.set("original")
+            messagebox.showerror("Error", f"Failed to update ratings: {str(e)}")
 
-    def create_heatmap_plot(self, pca):
-        """Create interactive heatmap of LDA clustering results"""
+    def update_pca_summary(self, text_widget):
+        """Update PCA-specific summary information"""
         try:
-            print("Creating heatmap plot...")
+            # Data preprocessing info
+            text_widget.insert(tk.END, "Data Preprocessing:\n", "heading")
+            text_widget.insert(tk.END, "- Standardization: StandardScaler\n")
+            text_widget.insert(tk.END, f"- Input dimensions: {len(self.pca_instance.original_dims)}\n\n")
+
+            # Explained variance information
+            text_widget.insert(tk.END, "Explained Variance:\n", "heading")
+            exp_var = self.pca_instance.explained_variance_ratio_
+            cumulative_var = np.cumsum(exp_var)
             
-            # Perform clustering if not already done
-            if not hasattr(pca, 'cluster_labels'):
-                print("Performing clustering...")
-                pca.perform_clustering()
-            
-            # Create the heatmap data
-            print("Creating heatmap data...")
-            unique_clusters = np.unique(pca.cluster_labels.astype(int))
-            n_components = min(12, pca.pca.components_.shape[0])            
-            # Initialize cluster data array
-            cluster_data = np.zeros((len(unique_clusters), n_components))
-            
-            # Calculate mean for each cluster
-            for i, cluster in enumerate(unique_clusters):
-                mask = pca.cluster_labels.astype(int) == cluster
-                cluster_prompts = pca.pca_ratings[mask, :n_components]  # Limit to n_components
-                cluster_data[i] = np.mean(cluster_prompts, axis=0)
-            
-            print(f"Cluster data shape: {cluster_data.shape}")
-            
-            # Create DataFrame for heatmap
-            cluster_df = pd.DataFrame(
-                cluster_data,
-                columns=[f"PC{i+1}" for i in range(n_components)],
-                index=[f"Cluster {i+1}" for i in range(len(unique_clusters))]
-            )
-            
-            print("Creating plotly figure...")
-            # Create plotly heatmap
-            fig = go.Figure(data=go.Heatmap(
-                z=cluster_df.values,
-                x=cluster_df.columns,
-                y=cluster_df.index,
-                colorscale='RdBu',
-                zmid=0,
-                text=np.round(cluster_df.values, 3),
-                texttemplate='%{text}',
-                textfont={"size": 10},
-                hoverongaps=False,
-                hovertemplate='Cluster: %{y}<br>Component: %{x}<br>Value: %{z:.3f}<extra></extra>'
-            ))
-            
-            # Update layout
-            fig.update_layout(
-                title='Cluster Heatmap of PCA Components',
-                height=600,
-                width=800,
-                xaxis_title='Principal Components',
-                yaxis_title='Clusters',
-                template='plotly_white'
-            )
-            
-            # Generate HTML
-            html_path = "pca_heatmap.html"
-            print(f"Saving heatmap to: {html_path}")
-            pyo.plot(fig, filename=html_path, auto_open=False)
-            
-            # Create instructions and button in GUI
-            instruction_label = ttk.Label(
-                self.fig_frame,
-                text="The interactive heatmap has been generated.",
-                font=('TkDefaultFont', 10, 'bold')
-            )
-            instruction_label.pack(pady=(20,5))
-            
-            # Add cluster information
-            print("Adding cluster information...")
-            cluster_info = self.create_cluster_info(pca)
-            cluster_info.pack(pady=5)
-            
-            open_button = ttk.Button(
-                self.fig_frame,
-                text="Open Heatmap in Browser",
-                command=lambda: webbrowser.open(html_path)
-            )
-            open_button.pack(pady=(5,20))
-            
-            print("Heatmap created successfully")
+            for i, (var, cum_var) in enumerate(zip(exp_var, cumulative_var)):
+                text_widget.insert(tk.END, 
+                    f"PC{i+1}: {var:.3f} ({cum_var:.3f} cumulative)\n")
+            text_widget.insert(tk.END, "\n")
+
+            # Variance contributions
+            text_widget.insert(tk.END, "Variable Contributions:\n", "heading")
+            var_contrib = self.pca_instance.variance_contributions
+            if var_contrib is not None:
+                sorted_contrib = var_contrib.sort_values(ascending=False)
+                for dim, contrib in sorted_contrib.items():
+                    text_widget.insert(tk.END, f"{dim}: {contrib:.2f}%\n")
+            text_widget.insert(tk.END, "\n")
+
+            # Component information
+            text_widget.insert(tk.END, "Component Information:\n", "heading")
+            text_widget.insert(tk.END, f"- Number of components: {self.pca_instance.pca.n_components_}\n")
+            text_widget.insert(tk.END, f"- Shape of loadings: {self.pca_instance.components_.shape}\n\n")
+
+            # Software information
+            text_widget.insert(tk.END, "Software Information:\n", "heading")
+            text_widget.insert(tk.END, "- scikit-learn PCA\n")
+            text_widget.insert(tk.END, "- pandas DataFrame\n")
+            text_widget.insert(tk.END, "- numpy arrays\n")
+
+            # Apply tags for formatting
+            text_widget.tag_configure("heading", font=("TkDefaultFont", 10, "bold"))
             
         except Exception as e:
-            print(f"Error creating heatmap: {str(e)}")
-            print("Debug information:")
-            print(f"- Cluster labels shape: {pca.cluster_labels.shape if hasattr(pca, 'cluster_labels') else 'No labels'}")
-            print(f"- PCA ratings shape: {pca.pca_ratings.shape if hasattr(pca, 'pca_ratings') else 'No ratings'}")
-            print(f"- Number of components: {pca.pca.components_.shape if hasattr(pca, 'pca') else 'No components'}")
+            print(f"Error updating PCA summary: {str(e)}")
             raise
 
-    def create_cluster_info(self, pca):
-        """Create text widget with cluster information"""
+    def create_ica_scatter_plot(self, ic1, ic2):
+        """Create scatter plot for ICA components"""
         try:
-            print("Creating cluster information panel...")
-            info_frame = ttk.LabelFrame(self.fig_frame, text="Cluster Information", padding=10)
+            # Check if ICA components exist
+            if (self.ica_instance is None or 
+                self.ica_instance.ica_components is None):
+                print("ICA components not available. Performing ICA...")
+                if not self.ica_instance.perform_ica(self.pca_instance.current_ratings):
+                    raise ValueError("Failed to perform ICA analysis")
             
-            text_widget = tk.Text(info_frame, height=6, width=50)
-            text_widget.pack(padx=5, pady=5)
+            # Create figure and axis
+            fig = Figure(figsize=(10, 8))
+            ax = fig.add_subplot(111)
             
-            # Convert cluster labels to integers and get unique clusters
-            cluster_labels = pca.cluster_labels.astype(int)
-            unique_clusters = sorted(np.unique(cluster_labels))
+            # Get ICA components
+            ica_data = self.ica_instance.ica_components
             
-            print(f"Processing {len(unique_clusters)} clusters...")
+            # Create scatter plot
+            scatter = ax.scatter(
+                ica_data[:, ic1],
+                ica_data[:, ic2],
+                alpha=0.6,
+                s=float(self.point_size.get())
+            )
             
-            # Add cluster information
-            for cluster in unique_clusters:
-                # Create boolean mask for current cluster
-                cluster_mask = cluster_labels == cluster
-                
-                # Get prompts for current cluster
-                cluster_prompts = []
-                for idx, is_in_cluster in enumerate(cluster_mask):
-                    if is_in_cluster:
-                        prompt = list(pca.prompts.values())[idx]
-                        cluster_prompts.append(prompt)
-                
-                # Write cluster information
-                text_widget.insert(tk.END, f"\nCluster {cluster + 1} ({len(cluster_prompts)} prompts):\n")
-                sample_prompts = cluster_prompts[:3] if len(cluster_prompts) > 3 else cluster_prompts
-                text_widget.insert(tk.END, f"Sample prompts: {', '.join(sample_prompts)}...\n")
+            # Labels and title
+            ax.set_xlabel(f'IC{ic1 + 1}')
+            ax.set_ylabel(f'IC{ic2 + 1}')
+            ax.set_title('ICA Components Scatter Plot')
             
-            text_widget.config(state='disabled')
-            print("Cluster information panel created successfully")
-            return info_frame
+            # Add grid
+            ax.grid(True, linestyle='--', alpha=0.7)
+            
+            # Create canvas
+            canvas = FigureCanvasTkAgg(fig, master=self.ica_fig_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Add toolbar
+            toolbar = NavigationToolbar2Tk(canvas, self.ica_fig_frame)
+            toolbar.update()
             
         except Exception as e:
-            print(f"Error creating cluster info: {str(e)}")
-            print("Debug information:")
-            print(f"- Cluster labels type: {type(pca.cluster_labels)}")
-            print(f"- Cluster labels shape: {pca.cluster_labels.shape}")
-            print(f"- Number of prompts: {len(pca.prompts)}")
+            print(f"Error creating ICA scatter plot: {str(e)}")
             raise
 
-    def generate_pc_names(self):
-        """Generate and display PC names using ChatGPT"""
+    def create_ica_matrix_plot(self):
+        """Create matrix plot for ICA components"""
         try:
-            print("\n=== Starting PC Name Generation ===")
-            self.status_label.config(text="Generating component names...")
-            self.root.update()
-
-            # Verify PCA data
-            if not hasattr(self, 'pca_instance') or self.pca_instance is None:
-                print("Debug: No PCA instance found")
-                raise ValueError("PCA must be run before generating names")
-                
-            # Initialize LLM Handler
-            print("\nDebug: Initializing LLM Handler")
-            from config import Config
-            from llm_handler import LLMHandler
-            from response_parser import ResponseParser
+            # Get ICA components
+            ica_data = self.ica_instance.ica_components
+            n_components = ica_data.shape[1]
             
-            config = Config()
-            llm = LLMHandler(config)
+            # Create figure with subplots
+            fig = Figure(figsize=(12, 10))
             
-            # Make text widget visible
-            print("\nDebug: Making text widgets visible")
-            self.names_text.pack(fill="both", expand=True)
-            for widget in self.names_text.master.winfo_children():
-                if isinstance(widget, ttk.Scrollbar):
-                    widget.pack(side="right", fill="y")
-                    break
+            # Calculate number of rows and columns for subplot grid
+            n_rows = (n_components + 1) // 2
+            n_cols = min(2, n_components)
             
-            pc_names = []
-            for i in range(self.pca_instance.components_.shape[0]):
-                # Use prepare_pc_data to format data correctly
-                pc_data = llm.prepare_pc_data(self.pca_instance, i)
-                print(f"\nDebug: Prepared data for PC{i+1}:")
-                print(f"Data structure: {pc_data.keys()}")
-                
-                response = llm.generate_name(pc_data=pc_data)
-                pc_names.append(response)
-                
-            # Display results
-            print("\nDebug: Displaying names")
-            self.names_text.delete('1.0', tk.END)
-            for result in pc_names:
-                if 'error' in result:
-                    self.names_text.insert(tk.END, f"PC{result['pc_num']}: {result['error']}\n")
-                else:
-                    self.names_text.insert(tk.END, f"PC{result['pc_num']}: {result['name']}\n")
-                    self.names_text.insert(tk.END, f"Explanation: {result['explanation']}\n\n")
+            # Create subplots
+            for i in range(n_components):
+                for j in range(i+1, n_components):
+                    ax = fig.add_subplot(n_rows, n_cols, i*n_cols + j + 1)
+                    ax.scatter(
+                        ica_data[:, i],
+                        ica_data[:, j],
+                        alpha=0.6,
+                        s=float(self.point_size.get())
+                    )
+                    ax.set_xlabel(f'IC{i+1}')
+                    ax.set_ylabel(f'IC{j+1}')
+                    ax.grid(True, linestyle='--', alpha=0.7)
             
-            self.status_label.config(text="Names generated successfully")
-            return pc_names
-
+            fig.tight_layout()
+            
+            # Create canvas
+            canvas = FigureCanvasTkAgg(fig, master=self.ica_fig_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Add toolbar
+            toolbar = NavigationToolbar2Tk(canvas, self.ica_fig_frame)
+            toolbar.update()
+            
         except Exception as e:
-            print(f"\nDebug: Error in generate_pc_names - {str(e)}")
-            print(f"Error type: {type(e)}")
-            import traceback
-            print(f"Traceback:\n{traceback.format_exc()}")
-            self.status_label.config(text=f"Error: {str(e)}")
-            raise e
+            print(f"Error creating ICA matrix plot: {str(e)}")
+            raise
 
-    
+    def create_ica_mixing_heatmap(self):
+        """Create heatmap of ICA mixing matrix"""
+        try:
+            # Get mixing matrix
+            mixing_matrix = self.ica_instance.mixing_matrix
+            
+            # Create figure
+            fig = Figure(figsize=(10, 8))
+            ax = fig.add_subplot(111)
+            
+            # Create heatmap
+            im = ax.imshow(mixing_matrix, cmap='coolwarm', aspect='auto')
+            
+            # Add colorbar
+            fig.colorbar(im)
+            
+            # Labels
+            ax.set_xlabel('Independent Components')
+            ax.set_ylabel('Original Features')
+            ax.set_title('ICA Mixing Matrix Heatmap')
+            
+            # Create canvas
+            canvas = FigureCanvasTkAgg(fig, master=self.ica_fig_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Add toolbar
+            toolbar = NavigationToolbar2Tk(canvas, self.ica_fig_frame)
+            toolbar.update()
+            
+        except Exception as e:
+            print(f"Error creating ICA mixing heatmap: {str(e)}")
+            raise
+
+    def create_kurtosis_plot(self):
+        """Create bar plot of kurtosis scores"""
+        try:
+            # Get kurtosis scores
+            kurtosis_scores = self.ica_instance.kurtosis_scores
+            
+            # Create figure
+            fig = Figure(figsize=(10, 6))
+            ax = fig.add_subplot(111)
+            
+            # Create bar plot
+            x = range(1, len(kurtosis_scores) + 1)
+            ax.bar(x, kurtosis_scores)
+            
+            # Labels and title
+            ax.set_xlabel('Independent Component')
+            ax.set_ylabel('Kurtosis')
+            ax.set_title('Kurtosis of Independent Components')
+            ax.set_xticks(x)
+            ax.set_xticklabels([f'IC{i}' for i in x])
+            
+            # Add grid
+            ax.grid(True, linestyle='--', alpha=0.7)
+            
+            # Create canvas
+            canvas = FigureCanvasTkAgg(fig, master=self.ica_fig_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Add toolbar
+            toolbar = NavigationToolbar2Tk(canvas, self.ica_fig_frame)
+            toolbar.update()
+            
+        except Exception as e:
+            print(f"Error creating kurtosis plot: {str(e)}")
+            raise
+
+    def create_signal_plot(self):
+        """Create plot of recovered signals"""
+        try:
+            # Get ICA components
+            signals = self.ica_instance.ica_components
+            
+            # Create figure
+            fig = Figure(figsize=(12, 8))
+            
+            # Calculate number of subplots needed
+            n_components = signals.shape[1]
+            n_rows = (n_components + 1) // 2
+            n_cols = min(2, n_components)
+            
+            # Create subplots for each component
+            for i in range(n_components):
+                ax = fig.add_subplot(n_rows, n_cols, i + 1)
+                ax.plot(signals[:, i])
+                ax.set_title(f'IC {i+1}')
+                ax.grid(True, linestyle='--', alpha=0.7)
+            
+            fig.tight_layout()
+            
+            # Create canvas
+            canvas = FigureCanvasTkAgg(fig, master=self.ica_fig_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # Add toolbar
+            toolbar = NavigationToolbar2Tk(canvas, self.ica_fig_frame)
+            toolbar.update()
+            
+        except Exception as e:
+            print(f"Error creating signal plot: {str(e)}")
+            raise
+
 # If you want to run directly from this file
 if __name__ == "__main__":
+    print("Creating GUI...")
     gui = ValueDimensionPCAGui()
+    print("Running GUI...")
     gui.run()
