@@ -1,5 +1,5 @@
-  # Ignore .env files
-   .env
+# Ignore .env files
+.env
 
-   # Ignore other sensitive or unnecessary files
+# Ignore other sensitive or unnecessary files
    __pycache__/
