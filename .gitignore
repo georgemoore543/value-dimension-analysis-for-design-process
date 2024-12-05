@@ -1,5 +1,9 @@
-# Ignore .env files
+# Environment variables
 .env
+.env.*
+!.env.example
 
-# Ignore other sensitive or unnecessary files
-   __pycache__/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
