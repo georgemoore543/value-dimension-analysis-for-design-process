@@ -337,7 +337,11 @@ class ValueDimensionPCA:
             # Convert prompts dictionary to list of texts
             prompt_texts = list(prompts.values())
             
-            print("Initializing TF-IDF vectorizer...")
+            print("\nDEBUG: Sample of prompt texts:")
+            for i, text in enumerate(prompt_texts[:3]):  # Show first 3 prompts
+                print(f"Prompt {i+1}: {text[:100]}...")  # Show first 100 chars
+            
+            print("\nInitializing TF-IDF vectorizer...")
             vectorizer = TfidfVectorizer(stop_words='english')
             
             print("Vectorizing texts...")
@@ -352,6 +356,17 @@ class ValueDimensionPCA:
             similarity_matrix = cosine_similarity(prompt_vectors, dim_vectors)
             print(f"Similarity matrix shape: {similarity_matrix.shape}")
             
+            # Debug print of similarity scores
+            print("\nDEBUG: Sample of cosine similarity scores:")
+            for i in range(min(3, similarity_matrix.shape[0])):  # Show first 3 rows
+                print(f"\nPrompt {i+1} similarities:")
+                for j in range(similarity_matrix.shape[1]):
+                    if isinstance(value_dims, pd.DataFrame):
+                        dim_name = value_dims['value dimensions'].iloc[j]
+                    else:
+                        dim_name = value_dims[j]
+                    print(f"{dim_name}: {similarity_matrix[i,j]:.4f}")
+            
             # Create DataFrame with original dimension names as columns
             if isinstance(value_dims, pd.DataFrame):
                 dim_names = value_dims['value dimensions'].tolist()
@@ -364,9 +379,11 @@ class ValueDimensionPCA:
                 columns=[f"{dim}_Rating" for dim in dim_names]
             )
             
-            print("Cosine similarity calculation complete")
-            print("Sample of cosine similarities:")
+            print("\nDEBUG: Cosine similarity calculation complete")
+            print("Sample of final cosine similarities DataFrame:")
             print(self.cosine_ratings.head())
+            print("\nSummary statistics:")
+            print(self.cosine_ratings.describe())
             
             return True
             
@@ -564,7 +581,10 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
         self.root.title("Value Dimension Analysis (PCA & ICA)")
         self.pca_instance = None
         self.ica_instance = ValueDimensionICA()
-        self.ratings_type = tk.StringVar(value="original")
+        
+        # Separate rating type variables for PCA and ICA
+        self.pca_ratings_type = tk.StringVar(value="original")
+        self.ica_ratings_type = tk.StringVar(value="original")
         
         # Initialize LLMHandler with configuration
         self.llm_handler = LLMHandler({
@@ -638,116 +658,142 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                 self.viz_window = tk.Toplevel(self.root)
                 self.viz_window.title("Analysis Visualization")
                 
-                # Add radio buttons for ratings type selection
-                ratings_frame = ttk.LabelFrame(self.viz_window, text="Ratings Type")
-                ratings_frame.pack(fill="x", padx=10, pady=5)
+                # Create main scrollable container
+                main_canvas = tk.Canvas(self.viz_window)
+                scrollbar = ttk.Scrollbar(self.viz_window, orient="vertical", command=main_canvas.yview)
+                scrollable_frame = ttk.Frame(main_canvas)
                 
-                def on_ratings_change():
-                    try:
-                        if self.ratings_type.get() == "cosine":
-                            print("Switching to cosine similarity scores...")
-                            # Calculate cosine similarities if not already done
-                            if not hasattr(self.pca_instance, 'cosine_ratings') or self.pca_instance.cosine_ratings is None:
-                                success = self.pca_instance.calculate_cosine_similarity(
-                                    self.pca_instance.prompts,
-                                    self.pca_instance.value_dims
-                                )
-                                if not success:
-                                    raise ValueError("Failed to calculate cosine similarities")
-                            
-                            # Update current_ratings with cosine similarities
-                            self.pca_instance.current_ratings = self.pca_instance.cosine_ratings.copy()
-                        else:
-                            print("Switching to original ratings...")
-                            self.pca_instance.current_ratings = self.pca_instance.ratings_data.copy()
-                        
-                        # Perform PCA with updated ratings
-                        if self.pca_instance.perform_pca():
-                            self.update_plot(self.pca_instance)
-                        else:
-                            raise ValueError("Failed to perform PCA with new ratings")
-                            
-                    except Exception as e:
-                        print(f"Error switching ratings type: {str(e)}")
-                        messagebox.showerror("Error", f"Failed to switch ratings type: {str(e)}")
-                        # Revert to original ratings if there's an error
-                        self.ratings_type.set("original")
-                    
-                ttk.Radiobutton(
-                    ratings_frame,
-                    text="Original Ratings",
-                    variable=self.ratings_type,
-                    value="original",
-                    command=on_ratings_change
-                ).pack(side="left", padx=5)
+                # Configure scrolling
+                scrollable_frame.bind(
+                    "<Configure>",
+                    lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+                )
+                main_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+                main_canvas.configure(yscrollcommand=scrollbar.set)
                 
-                ttk.Radiobutton(
-                    ratings_frame,
-                    text="Cosine Similarity Scores",
-                    variable=self.ratings_type,
-                    value="cosine",
-                    command=on_ratings_change
-                ).pack(side="left", padx=5)
-            
-            # ... rest of visualization code ...
-            
-            # Create main scrollable container
-            main_canvas = tk.Canvas(self.viz_window)
-            scrollbar = ttk.Scrollbar(self.viz_window, orient="vertical", command=main_canvas.yview)
-            scrollable_frame = ttk.Frame(main_canvas)
-            
-            # Configure scrolling
-            scrollable_frame.bind(
-                "<Configure>",
-                lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all"))
-            )
-            main_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-            main_canvas.configure(yscrollcommand=scrollbar.set)
-            
-            # Create side-by-side frames
-            pca_viz_frame = ttk.LabelFrame(scrollable_frame, text="PCA Results")
-            pca_viz_frame.pack(side="left", fill="both", expand=True, padx=5)
-            
-            ica_viz_frame = ttk.LabelFrame(scrollable_frame, text="ICA Results")
-            ica_viz_frame.pack(side="right", fill="both", expand=True, padx=5)
-            
-            # Store instances
-            self.pca_instance = pca
-            
-            # Create controls and panels for both analyses
-            self.create_visualization_controls(pca_viz_frame, analysis_type="pca")
-            self.create_visualization_controls(ica_viz_frame, analysis_type="ica")
-            
-            self.create_summary_panel(pca_viz_frame, analysis_type="pca")
-            self.create_summary_panel(ica_viz_frame, analysis_type="ica")
-            
-            # Create figure frames
-            self.pca_fig_frame = ttk.Frame(pca_viz_frame)
-            self.pca_fig_frame.pack(fill="both", expand=True, pady=5)
-            
-            self.ica_fig_frame = ttk.Frame(ica_viz_frame)
-            self.ica_fig_frame.pack(fill="both", expand=True, pady=5)
-            
-            # Update displays
-            self.update_summary(analysis_type="pca")
-            self.update_summary(analysis_type="ica")
-            self.update_plot(self.pca_instance)
-            
-            # Pack scrollbar and canvas
-            scrollbar.pack(side="right", fill="y")
-            main_canvas.pack(side="left", fill="both", expand=True)
-            
-            # Configure window size
-            self.viz_window.geometry("1600x800")  # Wider to accommodate both analyses
-            
-            # Enable mouse wheel scrolling
-            def _on_mousewheel(event):
-                main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-            main_canvas.bind_all("<MouseWheel>", _on_mousewheel)
-            
+                # Create side-by-side frames
+                pca_viz_frame = ttk.LabelFrame(scrollable_frame, text="PCA Results")
+                pca_viz_frame.pack(side="left", fill="both", expand=True, padx=5)
+                
+                ica_viz_frame = ttk.LabelFrame(scrollable_frame, text="ICA Results")
+                ica_viz_frame.pack(side="right", fill="both", expand=True, padx=5)
+                
+                # Add ratings type frames first
+                self.add_ratings_type_frame(pca_viz_frame, "pca")
+                self.add_ratings_type_frame(ica_viz_frame, "ica")
+                
+                # Create controls and panels for both analyses
+                self.create_visualization_controls(pca_viz_frame, analysis_type="pca")
+                self.create_visualization_controls(ica_viz_frame, analysis_type="ica")
+                
+                self.create_summary_panel(pca_viz_frame, analysis_type="pca")
+                self.create_summary_panel(ica_viz_frame, analysis_type="ica")
+                
+                # Create figure frames
+                self.pca_fig_frame = ttk.Frame(pca_viz_frame)
+                self.pca_fig_frame.pack(fill="both", expand=True, pady=5)
+                
+                self.ica_fig_frame = ttk.Frame(ica_viz_frame)
+                self.ica_fig_frame.pack(fill="both", expand=True, pady=5)
+                
+                # Initial update of displays
+                self.update_summary(analysis_type="pca")
+                self.update_summary(analysis_type="ica")
+                self.update_plot(self.pca_instance)
+                
+                # Pack scrollbar and canvas
+                scrollbar.pack(side="right", fill="y")
+                main_canvas.pack(side="left", fill="both", expand=True)
+                
+                # Configure window size
+                self.viz_window.geometry("1600x800")
+                
+                # Enable mouse wheel scrolling
+                def _on_mousewheel(event):
+                    main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+                main_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+                
         except Exception as e:
             print(f"Error in show_visualization: {str(e)}")
             raise
+
+    def add_ratings_type_frame(self, parent_frame, analysis_type):
+        """Add a ratings type frame for PCA or ICA analysis"""
+        ratings_frame = ttk.LabelFrame(parent_frame, text=f"{analysis_type.upper()} Ratings Type")
+        ratings_frame.pack(fill="x", padx=10, pady=5)
+        
+        # Use the appropriate ratings type variable
+        ratings_var = self.pca_ratings_type if analysis_type == "pca" else self.ica_ratings_type
+        
+        def update_analysis():
+            """Update the specified analysis with current data"""
+            try:
+                print(f"\nDEBUG: Updating {analysis_type} analysis")
+                print(f"DEBUG: Current ratings type: {ratings_var.get()}")
+                
+                if ratings_var.get() == "cosine":
+                    print("DEBUG: Calculating cosine similarities...")
+                    success = self.pca_instance.calculate_cosine_similarity(
+                        self.pca_instance.prompts,
+                        self.pca_instance.value_dims
+                    )
+                    if not success:
+                        raise ValueError("Failed to calculate cosine similarities")
+                    
+                    # Set the data source based on cosine similarities
+                    data_source = self.pca_instance.cosine_ratings.copy()
+                    print("DEBUG: Using cosine similarity ratings")
+                else:
+                    print("DEBUG: Using original ratings...")
+                    data_source = self.pca_instance.ratings_data.copy()
+                
+                # Update the appropriate analysis
+                if analysis_type == "pca":
+                    print("DEBUG: Updating PCA...")
+                    self.pca_instance.current_ratings = data_source
+                    if not self.pca_instance.perform_pca():
+                        raise ValueError("PCA calculation failed")
+                    self.update_summary("pca")  # Update summary first
+                    self.update_plot("pca")     # Then update plot
+                    print("DEBUG: PCA plot update called")
+                else:  # ICA
+                    print("DEBUG: Updating ICA...")
+                    if not self.ica_instance.perform_ica(data_source):
+                        raise ValueError("ICA calculation failed")
+                    self.update_summary("ica")
+                    self.update_plot("ica")
+                
+                print(f"DEBUG: {analysis_type.upper()} analysis update complete")
+                
+            except Exception as e:
+                print(f"Error updating {analysis_type} analysis: {str(e)}")
+                print("DEBUG: Stack trace:")
+                import traceback
+                traceback.print_exc()
+                messagebox.showerror("Error", f"Failed to update {analysis_type} analysis: {str(e)}")
+                # Revert to original ratings
+                ratings_var.set("original")
+                if analysis_type == "pca":
+                    self.pca_instance.current_ratings = self.pca_instance.ratings_data.copy()
+            
+        # Create radio buttons with debug prints
+        rb1 = ttk.Radiobutton(
+            ratings_frame,
+            text="Original Ratings",
+            variable=ratings_var,
+            value="original",
+            command=lambda: print(f"DEBUG: Selected original ratings for {analysis_type}") or update_analysis()
+        )
+        rb1.pack(side="left", padx=5)
+        
+        rb2 = ttk.Radiobutton(
+            ratings_frame,
+            text="Cosine Similarity Scores",
+            variable=ratings_var,
+            value="cosine",
+            command=lambda: print(f"DEBUG: Selected cosine ratings for {analysis_type}") or update_analysis()
+        )
+        rb2.pack(side="left", padx=5)
 
     def create_initial_widgets(self):
         # File count frame
@@ -908,8 +954,11 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                 "(No will use original ratings)"
             )
             
-            # Set initial ratings type based on user choice
-            self.ratings_type.set("cosine" if response else "original")
+            # Set initial ratings type based on user choice for both PCA and ICA
+            self.pca_ratings_type.set("cosine" if response else "original")
+            self.ica_ratings_type.set("cosine" if response else "original")
+            
+            # Update current ratings for PCA instance
             self.pca_instance.current_ratings = (
                 self.pca_instance.cosine_ratings if response 
                 else self.pca_instance.ratings_data
@@ -1270,29 +1319,7 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                 text="Update Summary",
                 command=lambda: self.update_summary(analysis_type)
             ).pack(side="left", padx=5)
-            
-            # Ratings type toggle (only for PCA)
-            if analysis_type == "pca":
-                print("Creating ratings toggle...")
-                ratings_frame = ttk.LabelFrame(control_frame, text="Ratings Type", padding="5")
-                ratings_frame.pack(fill="x", pady=5)
-                
-                ttk.Radiobutton(
-                    ratings_frame,
-                    text="Original Ratings",
-                    variable=self.ratings_type,
-                    value="original",
-                    command=self.update_ratings_type
-                ).pack(side="left", padx=5)
-                
-                ttk.Radiobutton(
-                    ratings_frame,
-                    text="Cosine Similarity Scores",
-                    variable=self.ratings_type,
-                    value="cosine",
-                    command=self.update_ratings_type
-                ).pack(side="left", padx=5)
-            
+                        
             # Plot controls
             print("Creating plot controls...")
             plot_controls = ttk.LabelFrame(control_frame, text="Plot Controls", padding="5")
@@ -1484,10 +1511,10 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
     def update_ratings_type(self):
         """Update the current ratings based on user selection"""
         try:
-            print(f"\nUpdating ratings type to: {self.ratings_type.get()}")
+            print(f"\nUpdating ratings type to: {self.pca_ratings_type.get()}")
             
             # Update current ratings based on selection
-            if self.ratings_type.get() == "cosine":
+            if self.pca_ratings_type.get() == "cosine":
                 self.pca_instance.current_ratings = self.pca_instance.cosine_ratings
                 print("Using cosine similarity ratings")
             else:
@@ -2196,6 +2223,42 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             
         except Exception as e:
             messagebox.showerror("Error", f"Error showing preview dialog: {str(e)}")
+
+    def update_ica_plot(self):
+        """Update the ICA visualization"""
+        try:
+            print("Updating ICA plot...")
+            if hasattr(self, 'ica_fig_frame'):
+                # Clear previous plot
+                for widget in self.ica_fig_frame.winfo_children():
+                    widget.destroy()
+                
+                # Create new figure
+                fig = Figure(figsize=(8, 6))
+                ax = fig.add_subplot(111)
+                
+                # Plot ICA components
+                if hasattr(self.ica_instance, 'ica_components'):
+                    ax.scatter(
+                        self.ica_instance.ica_components[:, 0],
+                        self.ica_instance.ica_components[:, 1]
+                    )
+                    ax.set_xlabel('IC1')
+                    ax.set_ylabel('IC2')
+                    ax.set_title('ICA Components')
+                    
+                    # Add the plot to the frame
+                    canvas = FigureCanvasTkAgg(fig, master=self.ica_fig_frame)
+                    canvas.draw()
+                    canvas.get_tk_widget().pack(fill="both", expand=True)
+                    
+                    print("ICA plot updated successfully")
+                else:
+                    print("No ICA components available")
+                    
+        except Exception as e:
+            print(f"Error updating ICA plot: {str(e)}")
+            messagebox.showerror("Error", f"Failed to update ICA plot: {str(e)}")
 
 # If you want to run directly from this file
 if __name__ == "__main__":
