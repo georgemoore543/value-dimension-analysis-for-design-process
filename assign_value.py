@@ -5,9 +5,14 @@ import os
 from openpyxl.styles import PatternFill
 from tkinter import filedialog
 import tkinter as tk
+from config import Config
 
-# Initialize the OpenAI client
-client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+# Initialize configuration and OpenAI client
+config = Config()
+client, error = config.get_openai_client()
+if error:
+    print(f"Error initializing OpenAI client: {error}")
+    exit(1)
 
 def validate_file_structure(df, file_type):
     """Validate the structure of uploaded files."""

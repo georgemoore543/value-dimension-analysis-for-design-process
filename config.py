@@ -37,6 +37,7 @@ class Config:
     def __init__(self):
         self.config_dir = Path.home() / '.pca_analyzer'
         self.config_file = self.config_dir / 'config.json'
+        self.api_key_file = Path('.env')
         self.settings = {
             'openai_api_key': None,
             'model': 'gpt-4',
@@ -45,6 +46,7 @@ class Config:
             'default_prompt_template': DEFAULT_PROMPT_TEMPLATE
         }
         self.load_config()
+        self.load_api_key()
 
     def load_config(self):
         """Load configuration from file or create default"""
@@ -182,4 +184,15 @@ class Config:
         """
         params = self.get_model_params()
         return self.set_model_params(params)
+
+    def load_api_key(self):
+        """Load API key from file"""
+        try:
+            if self.api_key_file.exists():
+                with open(self.api_key_file, 'r') as f:
+                    api_key = f.read().strip()
+                    if api_key:
+                        self.settings['openai_api_key'] = api_key
+        except Exception as e:
+            print(f"Error loading API key: {e}")
   
