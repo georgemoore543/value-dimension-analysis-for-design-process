@@ -1173,7 +1173,7 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             text_widget.insert(tk.END, f"Error updating ICA summary: {str(e)}\n")
 
     def generate_component_names(self, analysis_type="pca"):
-        """Generate names for components using run_pca_naming module"""
+        """Generate names for components using pca_naming module"""
         try:
             # Update status
             status_label = getattr(self, f"{analysis_type}_status_label")
