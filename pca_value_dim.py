@@ -162,6 +162,13 @@ class ValueDimensionPCA:
             print(f"Combined dimensions shape: {self.value_dims.shape}")
             print(f"Available columns: {self.value_dims.columns.tolist()}")
             
+            # Check for missing definitions after loading dimensions
+            if 'dim_definitions' in self.value_dims.columns:
+                missing_dims, missing_count = self.analyze_missing_definitions()
+                if missing_count > 0:
+                    # Return special status to trigger definition generation dialog
+                    return True, "missing_definitions"
+            
             # Load ratings files
             print("Loading ratings files...")
             ratings_dfs = []
@@ -210,6 +217,11 @@ class ValueDimensionPCA:
         """Perform PCA on the current ratings data"""
         try:
             print("\nDEBUG: Starting PCA process")
+            
+            # Ensure we have valid current_ratings
+            if self.current_ratings is None:
+                print("No current ratings available, using original ratings")
+                self.current_ratings = self.ratings_data.copy()
             
             # Filter out '#' columns BEFORE storing original dimensions
             valid_columns = [col for col in self.current_ratings.columns if col != '#']
@@ -307,20 +319,20 @@ class ValueDimensionPCA:
             # Handle value_dims whether it's a Series or DataFrame
             if isinstance(value_dims, pd.DataFrame):
                 print("Value dimensions DataFrame detected")
-                # If we have definitions, combine them with dimension names
-                if 'dim_definitions' in value_dims.columns:
-                    print("Using dimension names and definitions")
-                    dim_texts = [f"{dim} - {def_}" if pd.notna(def_) else dim 
-                               for dim, def_ in zip(value_dims['value dimensions'], 
-                                                  value_dims['dim_definitions'])]
-                else:
-                    print("Using dimension names only")
-                    dim_texts = value_dims['value dimensions'].tolist()
+                # Combine dimension names with their definitions
+                dim_texts = []
+                for _, row in value_dims.iterrows():
+                    dim_name = row['value dimensions']
+                    definition = row.get('dim_definitions', '')
+                    if pd.notna(definition) and definition.strip():
+                        combined_text = f"{dim_name}: {definition}"
+                    else:
+                        combined_text = dim_name
+                    dim_texts.append(combined_text)
+                    print(f"Combined text for {dim_name}: {combined_text}")
             else:
                 print("Value dimensions Series detected")
                 dim_texts = value_dims.tolist()
-            
-            print(f"Value dimensions available: {dim_texts}")
             
             # Convert prompts dictionary to list of texts
             prompt_texts = list(prompts.values())
@@ -424,6 +436,78 @@ class ValueDimensionPCA:
             
         return "\n".join(pattern_desc)
 
+    def analyze_missing_definitions(self) -> Tuple[pd.DataFrame, int]:
+        """Analyze dimensions file for missing definitions.
+        
+        Returns:
+            Tuple containing:
+            - DataFrame with missing definitions (value dimensions without definitions)
+            - Count of missing definitions
+        """
+        try:
+            print("\nAnalyzing dimensions file for missing definitions...")
+            
+            if self.value_dims is None:
+                raise ValueError("No dimensions data loaded")
+            
+            # Check for both NaN and empty string values
+            missing_mask = (
+                self.value_dims['dim_definitions'].isna() | 
+                (self.value_dims['dim_definitions'] == '')
+            )
+            
+            missing_dims = self.value_dims[missing_mask].copy()
+            missing_count = len(missing_dims)
+            
+            print(f"Found {missing_count} dimensions without definitions")
+            
+            return missing_dims, missing_count
+            
+        except Exception as e:
+            print(f"Error analyzing missing definitions: {str(e)}")
+            raise
+
+    def generate_missing_definitions(self, llm_handler: LLMHandler) -> pd.DataFrame:
+        """Generate definitions for dimensions that are missing them.
+        
+        Args:
+            llm_handler: Instance of LLMHandler for generating definitions
+            
+        Returns:
+            DataFrame containing original dimensions and new definitions
+        """
+        try:
+            # Get dimensions missing definitions
+            missing_dims, count = self.analyze_missing_definitions()
+            
+            if count == 0:
+                print("No missing definitions found")
+                return pd.DataFrame()
+            
+            # Get list of dimension names needing definitions
+            dims_to_define = missing_dims['value dimensions'].tolist()
+            
+            # Generate definitions using LLM
+            print(f"Generating definitions for {len(dims_to_define)} dimensions...")
+            generated_defs = llm_handler.generate_value_dimension_definitions(dims_to_define)
+            
+            # Create DataFrame with results
+            results_df = pd.DataFrame(generated_defs)
+            results_df.columns = ['value dimensions', 'generated_definition']
+            
+            # Merge with original missing dimensions to preserve order and other columns
+            final_df = missing_dims.merge(
+                results_df,
+                on='value dimensions',
+                how='left'
+            )
+            
+            return final_df
+            
+        except Exception as e:
+            print(f"Error generating missing definitions: {str(e)}")
+            raise
+
 class ValueDimensionICA:
     def __init__(self):
         self.ica = None
@@ -481,6 +565,14 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
         self.pca_instance = None
         self.ica_instance = ValueDimensionICA()
         self.ratings_type = tk.StringVar(value="original")
+        
+        # Initialize LLMHandler with configuration
+        self.llm_handler = LLMHandler({
+            'openai_api_key': os.getenv('OPENAI_API_KEY'),  # Make sure this env variable is set
+            'model': 'gpt-3.5-turbo',
+            'temperature': 0.7,
+            'max_tokens': 150
+        })
         
         # Add plot type variables
         self.pca_plot_type = tk.StringVar(value="scatter")
@@ -545,6 +637,59 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             if not hasattr(self, 'viz_window'):
                 self.viz_window = tk.Toplevel(self.root)
                 self.viz_window.title("Analysis Visualization")
+                
+                # Add radio buttons for ratings type selection
+                ratings_frame = ttk.LabelFrame(self.viz_window, text="Ratings Type")
+                ratings_frame.pack(fill="x", padx=10, pady=5)
+                
+                def on_ratings_change():
+                    try:
+                        if self.ratings_type.get() == "cosine":
+                            print("Switching to cosine similarity scores...")
+                            # Calculate cosine similarities if not already done
+                            if not hasattr(self.pca_instance, 'cosine_ratings') or self.pca_instance.cosine_ratings is None:
+                                success = self.pca_instance.calculate_cosine_similarity(
+                                    self.pca_instance.prompts,
+                                    self.pca_instance.value_dims
+                                )
+                                if not success:
+                                    raise ValueError("Failed to calculate cosine similarities")
+                            
+                            # Update current_ratings with cosine similarities
+                            self.pca_instance.current_ratings = self.pca_instance.cosine_ratings.copy()
+                        else:
+                            print("Switching to original ratings...")
+                            self.pca_instance.current_ratings = self.pca_instance.ratings_data.copy()
+                        
+                        # Perform PCA with updated ratings
+                        if self.pca_instance.perform_pca():
+                            self.update_plot(self.pca_instance)
+                        else:
+                            raise ValueError("Failed to perform PCA with new ratings")
+                            
+                    except Exception as e:
+                        print(f"Error switching ratings type: {str(e)}")
+                        messagebox.showerror("Error", f"Failed to switch ratings type: {str(e)}")
+                        # Revert to original ratings if there's an error
+                        self.ratings_type.set("original")
+                    
+                ttk.Radiobutton(
+                    ratings_frame,
+                    text="Original Ratings",
+                    variable=self.ratings_type,
+                    value="original",
+                    command=on_ratings_change
+                ).pack(side="left", padx=5)
+                
+                ttk.Radiobutton(
+                    ratings_frame,
+                    text="Cosine Similarity Scores",
+                    variable=self.ratings_type,
+                    value="cosine",
+                    command=on_ratings_change
+                ).pack(side="left", padx=5)
+            
+            # ... rest of visualization code ...
             
             # Create main scrollable container
             main_canvas = tk.Canvas(self.viz_window)
@@ -782,27 +927,47 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             return False
 
     def proceed(self):
-        """Modified proceed method to ensure ICA is performed"""
+        """Modified proceed method to handle missing definitions"""
         try:
             print("Starting proceed method...")
             
-            # Load and prepare all data first
-            if not self.load_and_prepare_data():
-                return
+            # Initialize PCA instance if it doesn't exist
+            if not hasattr(self, 'pca_instance') or self.pca_instance is None:
+                self.pca_instance = ValueDimensionPCA()
             
-            # Perform initial PCA
+            # Load and prepare all data first
+            success, message = self.pca_instance.load_data(self.ratings_paths, self.dims_paths)
+            
+            if not success:
+                messagebox.showerror("Error", message)
+                return
+                
+            # Check if we need to handle missing definitions
+            if message == "missing_definitions":
+                response = messagebox.askyesno(
+                    "Missing Definitions",
+                    "Some value dimensions are missing definitions. Would you like to generate them using AI?"
+                )
+                if response:
+                    self.show_definition_generation_dialog()
+                    return
+            
+            # Continue with normal PCA process
             print("Performing initial PCA...")
             if not self.pca_instance.perform_pca():
                 messagebox.showerror("Error", "PCA calculation failed")
                 return
                 
-            # Perform ICA
+            # Initialize and perform ICA
+            if not hasattr(self, 'ica_instance') or self.ica_instance is None:
+                self.ica_instance = ValueDimensionICA()
+            
             print("Performing ICA...")
             if not self.ica_instance.perform_ica(self.pca_instance.current_ratings):
                 messagebox.showerror("Error", "ICA calculation failed")
                 return
             
-            # Show visualization with toggle option
+            # Show visualization
             print("Showing visualization...")
             self.show_visualization(self.pca_instance)
             
@@ -1749,6 +1914,288 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
         except Exception as e:
             print(f"Error creating {analysis_type.upper()} heatmap plot: {str(e)}")
             raise
+
+    def show_definition_generation_dialog(self):
+        """Show dialog for generating missing value dimension definitions"""
+        try:
+            # Create dialog window
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Generate Value Dimension Definitions")
+            dialog.geometry("800x600")
+            
+            # Create main frame with padding
+            main_frame = ttk.Frame(dialog, padding="10")
+            main_frame.pack(fill="both", expand=True)
+            
+            # Analysis section
+            analysis_frame = ttk.LabelFrame(main_frame, text="Analysis", padding="5")
+            analysis_frame.pack(fill="x", pady=(0, 10))
+            
+            # Get missing definitions
+            missing_dims, missing_count = self.pca_instance.analyze_missing_definitions()
+            
+            if missing_count == 0:
+                ttk.Label(
+                    analysis_frame, 
+                    text="No missing definitions found in the dimensions file.",
+                    padding="5"
+                ).pack()
+                
+                ttk.Button(
+                    analysis_frame,
+                    text="Close",
+                    command=dialog.destroy
+                ).pack(pady=5)
+                return
+            
+            # Show analysis results
+            ttk.Label(
+                analysis_frame,
+                text=f"Found {missing_count} dimensions without definitions:",
+                padding="5"
+            ).pack()
+            
+            # Create scrollable frame for missing dimensions
+            canvas = tk.Canvas(analysis_frame)
+            scrollbar = ttk.Scrollbar(analysis_frame, orient="vertical", command=canvas.yview)
+            scrollable_frame = ttk.Frame(canvas)
+            
+            scrollable_frame.bind(
+                "<Configure>",
+                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            )
+            
+            canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+            
+            # List missing dimensions
+            for dim in missing_dims['value dimensions']:
+                ttk.Label(
+                    scrollable_frame,
+                    text=f"• {dim}",
+                    padding="2"
+                ).pack(anchor="w")
+            
+            canvas.pack(side="left", fill="both", expand=True, padx=(5, 0))
+            scrollbar.pack(side="right", fill="y")
+            
+            # Generation controls
+            control_frame = ttk.Frame(main_frame)
+            control_frame.pack(fill="x", pady=10)
+            
+            def generate_definitions():
+                try:
+                    # Disable generate button
+                    generate_btn.config(state="disabled")
+                    status_label.config(text="Generating definitions...")
+                    dialog.update()
+                    
+                    # Generate definitions
+                    results_df = self.pca_instance.generate_missing_definitions(self.llm_handler)
+                    
+                    # Show preview dialog
+                    self.show_definition_preview_dialog(results_df, dialog)
+                    
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to generate definitions: {str(e)}")
+                    generate_btn.config(state="normal")
+                    status_label.config(text="Ready")
+            
+            generate_btn = ttk.Button(
+                control_frame,
+                text="Generate Definitions",
+                command=generate_definitions
+            )
+            generate_btn.pack(side="left", padx=5)
+            
+            ttk.Button(
+                control_frame,
+                text="Cancel",
+                command=dialog.destroy
+            ).pack(side="left")
+            
+            # Status label
+            status_label = ttk.Label(main_frame, text="Ready")
+            status_label.pack(pady=5)
+            
+            # Make dialog modal
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error showing definition dialog: {str(e)}")
+
+    def show_definition_preview_dialog(self, results_df: pd.DataFrame, parent_dialog: tk.Toplevel):
+        """Show dialog for previewing and editing generated definitions"""
+        try:
+            # Create preview dialog
+            preview = tk.Toplevel(self.root)
+            preview.title("Preview Generated Definitions")
+            preview.geometry("1000x700")
+            
+            # Create main frame with padding
+            main_frame = ttk.Frame(preview, padding="10")
+            main_frame.pack(fill="both", expand=True)
+            
+            # Instructions
+            ttk.Label(
+                main_frame,
+                text="Review and edit generated definitions. Click 'Accept' when ready.",
+                padding="5"
+            ).pack(fill="x")
+            
+            # Create frame for definitions
+            defs_frame = ttk.Frame(main_frame)
+            defs_frame.pack(fill="both", expand=True, pady=10)
+            
+            # Headers
+            headers_frame = ttk.Frame(defs_frame)
+            headers_frame.pack(fill="x", pady=(0, 5))
+            ttk.Label(headers_frame, text="Value Dimension", width=30).pack(side="left", padx=5)
+            ttk.Label(headers_frame, text="Original Definition", width=30).pack(side="left", padx=5)
+            ttk.Label(headers_frame, text="Generated Definition", width=30).pack(side="left", padx=5)
+            
+            # Create scrollable frame for definitions
+            canvas = tk.Canvas(defs_frame)
+            scrollbar = ttk.Scrollbar(defs_frame, orient="vertical", command=canvas.yview)
+            scrollable_frame = ttk.Frame(canvas)
+            
+            scrollable_frame.bind(
+                "<Configure>",
+                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            )
+            
+            canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+            
+            # Store text widgets for later access
+            definition_widgets = {}
+            
+            # Add each dimension and its definitions
+            for idx, row in results_df.iterrows():
+                frame = ttk.Frame(scrollable_frame)
+                frame.pack(fill="x", pady=2)
+                
+                # Dimension name
+                ttk.Label(
+                    frame, 
+                    text=row['value dimensions'],
+                    width=30,
+                    wraplength=200
+                ).pack(side="left", padx=5)
+                
+                # Original definition (if any)
+                original_def = row.get('dim_definitions', '')
+                ttk.Label(
+                    frame,
+                    text=original_def if pd.notna(original_def) else "(No definition)",
+                    width=30,
+                    wraplength=200
+                ).pack(side="left", padx=5)
+                
+                # Generated definition (editable)
+                text_widget = tk.Text(frame, height=4, width=30, wrap="word")
+                text_widget.insert("1.0", row['generated_definition'])
+                text_widget.pack(side="left", padx=5)
+                
+                # Store reference to text widget
+                definition_widgets[row['value dimensions']] = text_widget
+            
+            canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+            
+            # Control buttons
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill="x", pady=10)
+            
+            def regenerate_definitions():
+                """Regenerate definitions for all dimensions"""
+                try:
+                    preview.destroy()
+                    parent_dialog.destroy()
+                    self.show_definition_generation_dialog()
+                except Exception as e:
+                    messagebox.showerror("Error", f"Error regenerating definitions: {str(e)}")
+            
+            def accept_definitions():
+                """Save accepted definitions and create new file"""
+                try:
+                    # Get edited definitions
+                    final_definitions = {}
+                    for dim, text_widget in definition_widgets.items():
+                        final_definitions[dim] = text_widget.get("1.0", "end-1c")
+                    
+                    # Create new DataFrame with updated definitions
+                    new_df = self.pca_instance.value_dims.copy()
+                    for dim, definition in final_definitions.items():
+                        new_df.loc[new_df['value dimensions'] == dim, 'dim_definitions'] = definition
+                    
+                    # Ask user where to save the file
+                    default_name = os.path.splitext(os.path.basename(self.dims_paths[0]))[0]
+                    file_path = filedialog.asksaveasfilename(
+                        defaultextension=".xlsx",
+                        initialfile=f"{default_name}_llm_generated_defs.xlsx",
+                        filetypes=[("Excel files", "*.xlsx")]
+                    )
+                    
+                    if file_path:
+                        # Save the file
+                        new_df.to_excel(file_path, index=False)
+                        messagebox.showinfo(
+                            "Success",
+                            f"Definitions saved to:\n{file_path}"
+                        )
+                        
+                        # Update current value_dims with new definitions
+                        self.pca_instance.value_dims = new_df
+                        
+                        # Recalculate cosine similarities with updated definitions
+                        if hasattr(self.pca_instance, 'prompts'):
+                            success = self.pca_instance.calculate_cosine_similarity(
+                                self.pca_instance.prompts,
+                                self.pca_instance.value_dims
+                            )
+                            if success:
+                                # Update current_ratings with new cosine similarities
+                                self.pca_instance.current_ratings = self.pca_instance.cosine_ratings.copy()
+                                
+                                # Perform PCA with updated ratings
+                                if self.pca_instance.perform_pca():
+                                    print("PCA recalculated with new cosine similarities")
+                                else:
+                                    print("Failed to recalculate PCA")
+                        
+                        # Close dialogs
+                        preview.destroy()
+                        parent_dialog.destroy()
+                        
+                except Exception as e:
+                    messagebox.showerror("Error", f"Error saving definitions: {str(e)}")
+            
+            ttk.Button(
+                button_frame,
+                text="Regenerate All",
+                command=regenerate_definitions
+            ).pack(side="left", padx=5)
+            
+            ttk.Button(
+                button_frame,
+                text="Accept and Save",
+                command=accept_definitions
+            ).pack(side="left", padx=5)
+            
+            ttk.Button(
+                button_frame,
+                text="Cancel",
+                command=lambda: [preview.destroy(), parent_dialog.destroy()]
+            ).pack(side="left", padx=5)
+            
+            # Make dialog modal
+            preview.transient(self.root)
+            preview.grab_set()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error showing preview dialog: {str(e)}")
 
 # If you want to run directly from this file
 if __name__ == "__main__":

@@ -14,7 +14,13 @@ class DateTimeEncoder(json.JSONEncoder):
 class PCALogger:
     """Logger for PCA name generation process"""
     
-    def __init__(self, log_dir: Optional[Path] = None):
+    def __init__(self, log_dir: Optional[Path] = None, debug_mode: bool = True):
+        """Initialize logger with debug mode setting.
+        
+        Args:
+            log_dir: Path to the directory where logs are stored (default: None)
+            debug_mode: Boolean to enable/disable debug logging (default: True)
+        """
         self.logger = logging.getLogger(__name__)
         self.log_dir = log_dir or Path.home() / '.pca_analyzer' / 'logs'
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -39,6 +45,18 @@ class PCALogger:
         self.logger.setLevel(logging.DEBUG)
         self.logger.addHandler(self.file_handler)
         self.logger.addHandler(self.console_handler)
+
+        self._debug_mode = debug_mode  # Use private attribute
+
+    @property
+    def debug_mode(self) -> bool:
+        """Get current debug mode setting"""
+        return self._debug_mode
+
+    @debug_mode.setter
+    def debug_mode(self, value: bool):
+        """Set debug mode setting"""
+        self._debug_mode = value
 
     def log_api_call(self, pc_data: Dict[str, Any], response: Dict[str, Any]):
         """Log API call details with datetime handling"""
@@ -65,4 +83,21 @@ class PCALogger:
         self.logger.info(
             f"Performance: {pc_count} PCs processed in {duration:.2f}s "
             f"(avg: {avg_time:.2f}s per PC)"
-        ) 
+        )
+
+    def debug(self, message):
+        if self._debug_mode:
+            print(f"DEBUG: {message}")
+
+    def info(self, message):
+        print(f"INFO: {message}")
+
+    def warning(self, message):
+        print(f"WARNING: {message}")
+
+    def error(self, message):
+        print(f"ERROR: {message}")
+
+    def critical(self, message):
+        print(f"CRITICAL: {message}")
+ 

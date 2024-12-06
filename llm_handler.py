@@ -358,4 +358,59 @@ Explanation: [your explanation]"""
         
         df = pd.DataFrame(results)
         df.to_excel(export_path, index=False)
-        return str(export_path) 
+        return str(export_path)
+
+    def generate_value_dimension_definitions(self, dimensions: List[str]) -> List[Dict[str, str]]:
+        """Generate definitions for value dimensions using the LLM.
+        
+        Args:
+            dimensions: List of value dimension names needing definitions
+            
+        Returns:
+            List of dictionaries containing the dimension name and generated definition
+        """
+        try:
+            results = []
+            
+            for dimension in dimensions:
+                prompt = self._create_dimension_definition_prompt(dimension)
+                
+                response = self.sync_client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant specializing in defining value dimensions and design principles."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=150
+                )
+                
+                definition = response.choices[0].message.content.strip()
+                
+                results.append({
+                    'dimension': dimension,
+                    'definition': definition
+                })
+                
+                # Enforce rate limiting between requests
+                self._enforce_rate_limit()
+                
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Error generating definitions: {str(e)}")
+            raise
+
+    def _create_dimension_definition_prompt(self, dimension: str) -> str:
+        """Create prompt for generating a value dimension definition"""
+        return f"""Please provide a clear, concise definition for the following value dimension or design principle:
+
+Value Dimension: {dimension}
+
+Requirements:
+1. Definition should be 1-2 sentences
+2. Focus on how this dimension relates to design or user experience
+3. Use clear, professional language
+4. Avoid jargon unless necessary
+
+Please provide only the definition without any additional formatting or labels."""
