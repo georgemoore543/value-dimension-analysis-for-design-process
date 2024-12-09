@@ -5,14 +5,40 @@ import os
 from openpyxl.styles import PatternFill
 from tkinter import filedialog
 import tkinter as tk
-from config import Config
+from llm_handler import LLMHandler
 
-# Initialize configuration and OpenAI client
-config = Config()
-client, error = config.get_openai_client()
-if error:
-    print(f"Error initializing OpenAI client: {error}")
-    exit(1)
+def initialize_client():
+    """Initialize LLMHandler with API key from .env file"""
+    try:
+        config = {
+            'openai_api_key': None,
+            'model': 'gpt-3.5-turbo',
+            'temperature': 0.7,
+            'max_tokens': 150
+        }
+        
+        # Load API key from .env file
+        if os.path.exists('.env'):
+            with open('.env', 'r') as f:
+                for line in f:
+                    if line.startswith('OPENAI_API_KEY='):
+                        api_key = line.split('=')[1].strip()
+                        config['openai_api_key'] = api_key
+                        print(f"API key loaded from .env file: {api_key[:6]}...{api_key[-4:]}")
+                        break
+                else:
+                    print("Error: OPENAI_API_KEY not found in .env file")
+                    return None, None
+        else:
+            print("Error: .env file not found")
+            return None, None
+
+        # Initialize LLMHandler
+        handler = LLMHandler(config)
+        return handler, config
+    except Exception as e:
+        print(f"Error initializing LLMHandler: {str(e)}")
+        return None, None
 
 def validate_file_structure(df, file_type):
     """Validate the structure of uploaded files."""
@@ -121,21 +147,32 @@ Statement: {text}
 
 Please respond with ONLY a single number ({min(scale_descriptions.keys())}-{max(scale_descriptions.keys())}) representing your rating for {dimension}."""
 
-def get_openai_rating(prompt, dimension, dimension_scales):
-    """Get rating from OpenAI API."""
+def get_openai_rating(handler, prompt, dimension, dimension_scales):
+    """Get rating from OpenAI API using LLMHandler"""
+    if handler is None:
+        print("Debug: LLMHandler is not initialized.")
+        return None
+
+    # Add debug message to verify API key in use
+    print(f"Using API key: {handler.config['openai_api_key'][:6]}...{handler.config['openai_api_key'][-4:]}")
+
     scale_descriptions = dimension_scales[dimension]
     try:
-        response = client.chat.completions.create(
+        messages = [
+            {
+                "role": "system", 
+                "content": f"You are a precise evaluator. Respond only with a single number between {min(scale_descriptions.keys())} and {max(scale_descriptions.keys())}."
+            },
+            {"role": "user", "content": prompt}
+        ]
+        
+        # Use the sync_client from LLMHandler
+        response = handler.sync_client.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system", 
-                    "content": f"You are a precise evaluator. Respond only with a single number between {min(scale_descriptions.keys())} and {max(scale_descriptions.keys())}."
-                },
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3
+            messages=messages,
+            temperature=0.7
         )
+        
         rating = int(response.choices[0].message.content.strip())
         valid_points = scale_descriptions.keys()
         return rating if rating in valid_points else min(valid_points) + len(valid_points) // 2
@@ -178,6 +215,12 @@ def apply_color_formatting(writer, sheet_name, dimension_columns, dimension_scal
                                       fill_type='solid')
 
 def main():
+    # Initialize LLMHandler
+    handler, config = initialize_client()
+    if handler is None:
+        print("Failed to initialize LLMHandler")
+        return
+        
     # Read Excel files
     prompts, dim_definitions, dimension_scales = read_excel_files()
     if prompts is None or dim_definitions is None or dimension_scales is None:
@@ -199,7 +242,7 @@ def main():
                 dim_definitions[dimension],
                 dimension_scales
             )
-            rating = get_openai_rating(evaluation_prompt, dimension, dimension_scales)
+            rating = get_openai_rating(handler, evaluation_prompt, dimension, dimension_scales)
             ratings.append(rating)
         
         # Add ratings column to prompts.xlsx

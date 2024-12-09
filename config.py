@@ -40,7 +40,7 @@ class Config:
         self.api_key_file = Path('.env')
         self.settings = {
             'openai_api_key': None,
-            'model': 'gpt-4',
+            'model': 'gpt-3.5-turbo',
             'temperature': 0.7,
             'max_tokens': 200,
             'default_prompt_template': DEFAULT_PROMPT_TEMPLATE
@@ -186,13 +186,26 @@ class Config:
         return self.set_model_params(params)
 
     def load_api_key(self):
-        """Load API key from file"""
+        """Load API key from .env file"""
         try:
             if self.api_key_file.exists():
                 with open(self.api_key_file, 'r') as f:
-                    api_key = f.read().strip()
-                    if api_key:
-                        self.settings['openai_api_key'] = api_key
+                    file_api_key = f.read().strip()
+                    print(f"File API key exists: {bool(file_api_key)}")
+                    if file_api_key:
+                        self.settings['openai_api_key'] = file_api_key
+            
+            # Print final state (with key partially hidden)
+            final_key = self.settings.get('openai_api_key', '')
+            masked_key = f"{final_key[:8]}...{final_key[-4:]}" if final_key else "None"
+            print(f"Final API key being used: {masked_key}")
+            
         except Exception as e:
             print(f"Error loading API key: {e}")
+
+    def clear_api_key(self):
+        """Clear the API key from settings and save"""
+        self.settings['openai_api_key'] = None
+        self.save_config()
+        return True, None
   
