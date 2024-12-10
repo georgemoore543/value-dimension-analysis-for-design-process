@@ -6,3 +6,5 @@ plotly
 dash
 openai
 openpyxl
+tiktoken
+seaborn
