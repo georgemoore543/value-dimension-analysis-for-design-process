@@ -7,3 +7,10 @@
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Excel files
+*.xlsx
+
+# IDE specific files
+.vscode/
+.idea/
