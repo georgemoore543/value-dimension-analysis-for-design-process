@@ -34,6 +34,7 @@ from response_parser import ResponseParser
 from sklearn.decomposition import FastICA
 import scipy.stats as stats
 from dotenv import load_dotenv
+from tkinterweb import HtmlFrame
 
 # At the start of your script or in __init__
 load_dotenv()  # This loads the .env file
@@ -1664,73 +1665,93 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             for widget in frame.winfo_children():
                 widget.destroy()
             
-            # Get appropriate data and dimensions
+            # Unbind any existing mouse wheel events from the main window
+            self.root.unbind_all("<MouseWheel>")
+            
             if analysis_type == "pca":
-                data = instance.pca.components_
-                dims = instance.original_dims
-            else:
+                # Create a container frame
+                container = ttk.Frame(frame)
+                container.pack(fill="both", expand=True)
+                
+                # Create Plotly scatter matrix for PCA
+                pca_df = pd.DataFrame(
+                    instance.pca_ratings,
+                    columns=[f"PC{i+1}" for i in range(instance.pca_ratings.shape[1])]
+                )
+                
+                # Add original dimension values if available
+                if hasattr(instance, 'original_dims'):
+                    hover_data = {}
+                    for dim in instance.original_dims:
+                        if dim in instance.current_ratings.columns:
+                            hover_data[dim] = instance.current_ratings[dim]
+                
+                # Create scatter matrix
+                fig = px.scatter_matrix(
+                    pca_df,
+                    dimensions=pca_df.columns,
+                    title="PCA Components Scatter Matrix",
+                    hover_data=hover_data if hover_data else None
+                )
+                
+                # Update layout for better visibility
+                fig.update_layout(
+                    height=800,
+                    width=800,
+                    title_x=0.5,
+                )
+                
+                # Create a temporary HTML file and open it in the browser
+                temp_file = "pca_scatter_matrix.html"
+                fig.write_html(temp_file)
+                webbrowser.open(f'file://{os.path.realpath(temp_file)}')
+                
+                # Create a label in the tkinter window
+                ttk.Label(
+                    frame, 
+                    text="PCA scatter matrix opened in web browser.\nClose browser tab when finished viewing."
+                ).pack(pady=20)
+                
+            else:  # ICA
                 data = instance.mixing_matrix.T
-                dims = self.pca_instance.original_dims  # Use PCA instance's dimensions
-            
-            # Debug print
-            print(f"\nDebug information for {analysis_type} matrix plot:")
-            print(f"Data shape: {data.shape}")
-            print(f"Number of dimensions: {len(dims)}")
-            
-            # Create figure with subplots
-            n_components = data.shape[0]
-            n_cols = min(4, n_components)
-            n_rows = (n_components + n_cols - 1) // n_cols
-            
-            fig = Figure(figsize=(12, 3*n_rows))
-            
-            for i in range(n_components):
-                ax = fig.add_subplot(n_rows, n_cols, i+1)
+                dims = self.pca_instance.original_dims
                 
-                # Get component data
-                component_data = data[i]
+                # Create figure with subplots
+                n_components = data.shape[0]
+                n_cols = min(4, n_components)
+                n_rows = (n_components + n_cols - 1) // n_cols
                 
-                # Ensure we don't exceed the number of dimensions
-                valid_indices = np.where(np.arange(len(component_data)) < len(dims))[0]
+                fig = Figure(figsize=(12, 3*n_rows))
                 
-                # Sort valid indices by absolute values
-                sorted_indices = valid_indices[np.argsort(np.abs(component_data[valid_indices]))[::-1]]
-                
-                # Take top N dimensions (where N is min of 12 and available valid dimensions)
-                n_dims = min(12, len(sorted_indices))
-                top_indices = sorted_indices[:n_dims]
-                
-                if len(top_indices) == 0:
-                    print(f"Warning: No valid indices for component {i+1}")
-                    continue
+                for i in range(n_components):
+                    ax = fig.add_subplot(n_rows, n_cols, i+1)
+                    component_data = data[i]
+                    valid_indices = np.where(np.arange(len(component_data)) < len(dims))[0]
+                    sorted_indices = valid_indices[np.argsort(np.abs(component_data[valid_indices]))[::-1]]
+                    n_dims = min(12, len(sorted_indices))
+                    top_indices = sorted_indices[:n_dims]
                     
-                # Plot bars
-                bars = ax.bar(range(len(top_indices)), component_data[top_indices])
+                    if len(top_indices) > 0:
+                        bars = ax.bar(range(len(top_indices)), component_data[top_indices])
+                        for bar in bars:
+                            bar.set_color('red' if bar.get_height() < 0 else 'blue')
+                        
+                        ax.set_title(f"IC{i+1}")
+                        ax.set_xticks(range(len(top_indices)))
+                        ax.set_xticklabels([dims[idx] for idx in top_indices], rotation=45, ha='right')
+                        ax.grid(True, alpha=0.3)
                 
-                # Color bars based on value
-                for bar in bars:
-                    if bar.get_height() < 0:
-                        bar.set_color('red')
-                    else:
-                        bar.set_color('blue')
+                fig.tight_layout()
                 
-                # Customize plot
-                ax.set_title(f"{'PC' if analysis_type == 'pca' else 'IC'}{i+1}")
-                ax.set_xticks(range(len(top_indices)))
-                ax.set_xticklabels([dims[idx] for idx in top_indices], rotation=45, ha='right')
-                ax.grid(True, alpha=0.3)
-            
-            fig.tight_layout()
-            
-            # Create canvas
-            canvas = FigureCanvasTkAgg(fig, master=frame)
-            canvas.draw()
-            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-            
-            # Add toolbar
-            toolbar = NavigationToolbar2Tk(canvas, frame)
-            toolbar.update()
-            
+                # Create canvas for ICA
+                canvas = FigureCanvasTkAgg(fig, master=frame)
+                canvas.draw()
+                canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+                
+                # Add toolbar for ICA
+                toolbar = NavigationToolbar2Tk(canvas, frame)
+                toolbar.update()
+                
         except Exception as e:
             print(f"Error creating {analysis_type.upper()} matrix plot: {str(e)}")
             print(f"Additional debug info:")
