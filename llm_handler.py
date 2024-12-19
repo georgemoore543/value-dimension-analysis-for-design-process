@@ -12,6 +12,7 @@ from datetime import datetime
 from error_handler import with_error_handling
 from logger import PCALogger
 import json
+import os
 
 @dataclass
 class APIUsage:
@@ -45,9 +46,29 @@ class LLMHandler:
     }
 
     def __init__(self, config):
-        """Initialize both sync and async clients"""
+        """Initialize the LLM handler with configuration"""
         self.config = config
+        
+        # First try to get API key from config
         self.api_key = config.get('openai_api_key')
+        
+        # If not in config, try .env file
+        if not self.api_key and os.path.exists('.env'):
+            with open('.env', 'r') as f:
+                for line in f:
+                    if line.startswith('OPENAI_API_KEY='):
+                        self.api_key = line.strip().split('=')[1].strip()
+                        print(f"Using API key from .env file (ends with ...{self.api_key[-4:]})")
+                        break
+        
+        # If still no API key, try environment variable as last resort
+        if not self.api_key:
+            self.api_key = os.getenv('OPENAI_API_KEY')
+        
+        if not self.api_key:
+            raise ValueError("No API key found in config, .env file, or environment variables")
+        
+        # Initialize the OpenAI client
         self.sync_client = OpenAI(api_key=self.api_key)
         self.async_client = AsyncOpenAI(api_key=self.api_key)
         self.last_request_time = 0

@@ -33,6 +33,10 @@ from llm_handler import LLMHandler
 from response_parser import ResponseParser
 from sklearn.decomposition import FastICA
 import scipy.stats as stats
+from dotenv import load_dotenv
+
+# At the start of your script or in __init__
+load_dotenv()  # This loads the .env file
 
 print("File loaded, ValueDimensionPCA will be defined at:", __name__)
 
@@ -588,11 +592,15 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
         
         # Initialize LLMHandler with configuration
         self.llm_handler = LLMHandler({
-            'openai_api_key': os.getenv('OPENAI_API_KEY'),  # Make sure this env variable is set
+            'openai_api_key': os.getenv('OPENAI_API_KEY'),  # Still using os.getenv, but now it reads from .env
             'model': 'gpt-3.5-turbo',
             'temperature': 0.7,
             'max_tokens': 150
         })
+        
+        # You might also want to add error handling:
+        if not os.getenv('OPENAI_API_KEY'):
+            raise ValueError("OpenAI API key not found in .env file. Please add OPENAI_API_KEY=your_key_here to your .env file")
         
         # Add plot type variables
         self.pca_plot_type = tk.StringVar(value="scatter")

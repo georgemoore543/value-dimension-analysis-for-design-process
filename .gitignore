@@ -14,3 +14,7 @@ __pycache__/
 # IDE specific files
 .vscode/
 .idea/
+
+# Ignore diagnostics folder and all its contents
+diagnostics/
+diagnostics/*

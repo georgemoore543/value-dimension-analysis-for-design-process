@@ -8,3 +8,4 @@ openai
 openpyxl
 tiktoken
 seaborn
+python-dotenv
