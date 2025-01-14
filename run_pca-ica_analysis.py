@@ -1680,8 +1680,34 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                 )
                 
                 if hasattr(instance, 'prompts'):
-                    # Create a list of prompts in the correct order
-                    prompt_texts = [f"Prompt: {instance.prompts[i]}" for i in range(len(instance.prompts))]
+                    # Format prompts with line wrapping and character limit
+                    def format_prompt(text):
+                        # Truncate to total limit if needed
+                        if len(text) > 210:
+                            text = text[:207] + "..."
+                        
+                        # Add line breaks every 70 characters at word boundaries
+                        words = text.split()
+                        lines = []
+                        current_line = []
+                        current_length = 0
+                        
+                        for word in words:
+                            if current_length + len(word) + 1 <= 70:
+                                current_line.append(word)
+                                current_length += len(word) + 1
+                            else:
+                                lines.append(" ".join(current_line))
+                                current_line = [word]
+                                current_length = len(word)
+                        
+                        if current_line:
+                            lines.append(" ".join(current_line))
+                        
+                        return "Prompt: " + "<br>".join(lines)
+                    
+                    # Create formatted prompt texts
+                    prompt_texts = [format_prompt(instance.prompts[i]) for i in range(len(instance.prompts))]
                     pca_df['prompt_text'] = prompt_texts
                     
                     # Add value dimensions for hover data
@@ -1699,7 +1725,6 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                     # Customize hover template to show prompt only once
                     for dim in fig.data:
                         if hasattr(dim, 'hovertemplate'):
-                            # Remove the duplicate prompt_text= prefix
                             dim.hovertemplate = dim.hovertemplate.replace('prompt_text=', '')
                 else:
                     # Create basic scatter matrix if no prompts available
