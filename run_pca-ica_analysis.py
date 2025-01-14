@@ -1679,20 +1679,35 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                     columns=[f"PC{i+1}" for i in range(instance.pca_ratings.shape[1])]
                 )
                 
-                # Add original dimension values if available
-                if hasattr(instance, 'original_dims'):
-                    hover_data = {}
-                    for dim in instance.original_dims:
-                        if dim in instance.current_ratings.columns:
-                            hover_data[dim] = instance.current_ratings[dim]
-                
-                # Create scatter matrix
-                fig = px.scatter_matrix(
-                    pca_df,
-                    dimensions=pca_df.columns,
-                    title="PCA Components Scatter Matrix",
-                    hover_data=hover_data if hover_data else None
-                )
+                if hasattr(instance, 'prompts'):
+                    # Create a list of prompts in the correct order
+                    prompt_texts = [f"Prompt: {instance.prompts[i]}" for i in range(len(instance.prompts))]
+                    pca_df['prompt_text'] = prompt_texts
+                    
+                    # Add value dimensions for hover data
+                    for col in instance.original_dims:
+                        pca_df[col] = instance.current_ratings[col]
+                    
+                    # Create scatter matrix with custom hover template
+                    fig = px.scatter_matrix(
+                        pca_df,
+                        dimensions=[col for col in pca_df.columns if col.startswith('PC')],
+                        title="PCA Components Scatter Matrix",
+                        hover_data=instance.original_dims + ['prompt_text']
+                    )
+                    
+                    # Customize hover template to show prompt only once
+                    for dim in fig.data:
+                        if hasattr(dim, 'hovertemplate'):
+                            # Remove the duplicate prompt_text= prefix
+                            dim.hovertemplate = dim.hovertemplate.replace('prompt_text=', '')
+                else:
+                    # Create basic scatter matrix if no prompts available
+                    fig = px.scatter_matrix(
+                        pca_df,
+                        dimensions=pca_df.columns,
+                        title="PCA Components Scatter Matrix"
+                    )
                 
                 # Update layout for better visibility
                 fig.update_layout(
@@ -1711,6 +1726,19 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                     frame, 
                     text="PCA scatter matrix opened in web browser.\nClose browser tab when finished viewing."
                 ).pack(pady=20)
+                
+                # Inside create_matrix_plot method, add debug prints:
+                if hasattr(instance, 'prompts'):
+                    print("Prompts attribute exists")
+                    print("Type:", type(instance.prompts))
+                    print("Sample prompts:", dict(list(instance.prompts.items())[:2]))
+                else:
+                    print("No 'prompts' attribute found")
+                
+                # Also check the ratings data
+                print("\nDEBUG: Checking ratings data:")
+                print("Original dimensions:", instance.original_dims[:5])
+                print("Current ratings columns:", instance.current_ratings.columns.tolist()[:5])
                 
             else:  # ICA
                 data = instance.mixing_matrix.T
