@@ -226,22 +226,34 @@ class LLMHandler:
             print(f"Error generating name: {str(e)}")
             return None
 
-    def _create_pca_prompt(self, pc_data):
-        """Create prompt for PCA component naming"""
-        return f"""Please analyze this Principal Component and provide a concise name and explanation.
+    def _create_pca_prompt(self, component_data):
+        prompt = f"""Please analyze Principal Component {component_data['pc_num']} and generate a meaningful name and explanation.
 
-Component number: {pc_data['pc_num']}
-Top contributing dimensions: {pc_data['top_dims']}
-High-loading prompts: {pc_data['high_prompts']}
-Low-loading prompts: {pc_data['low_prompts']}
+Top contributing dimensions with their definitions:
+{component_data['top_dims']}
 
-Please provide:
-1. A short, descriptive name (2-6 words)
-2. A brief explanation of what this component might represent
+High-scoring examples:
+{component_data['high_prompts']}
+
+Low-scoring examples:
+{component_data['low_prompts']}
+
+Please generate:
+1. A concise but meaningful name (2-5 words) that captures the underlying concept represented by this component. Consider the definitions of the value dimensions, not just their names.
+2. A brief explanation (2-3 sentences) of why this name was chosen, referencing how the component relates to the underlying value dimensions and their definitions.
 
 Format your response as:
 Name: [your suggested name]
 Explanation: [your explanation]"""
+
+        # Debug output
+        print("\n" + "="*50)
+        print(f"DEBUG: Prompt for PC{component_data['pc_num']}:")
+        print("="*50)
+        print(prompt)
+        print("="*50 + "\n")
+
+        return prompt
 
     def _create_ica_prompt(self, ic_data):
         """Create prompt for ICA component naming"""
