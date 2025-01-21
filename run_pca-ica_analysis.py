@@ -624,6 +624,9 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
         self.ratings_count = tk.StringVar(value="1")
         self.dims_count = tk.StringVar(value="1")
         
+        # Add ICA components variable
+        self.ica_n_components = tk.StringVar(value="5")  # Default to 5 components
+        
         # Create initial widgets
         self.create_initial_widgets()
 
@@ -1375,6 +1378,22 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             
             print("Control frame created successfully")
             
+            if analysis_type == "ica":
+                # Add ICA components control
+                ica_control_frame = ttk.LabelFrame(control_frame, text="ICA Settings", padding="5")
+                ica_control_frame.pack(fill="x", pady=5)
+                
+                ttk.Label(ica_control_frame, text="Number of Components:").pack(side="left", padx=5)
+                ica_comp_entry = ttk.Entry(ica_control_frame, textvariable=self.ica_n_components, width=3)
+                ica_comp_entry.pack(side="left")
+                
+                # Add apply button to update ICA with new component number
+                ttk.Button(
+                    ica_control_frame,
+                    text="Apply",
+                    command=self.update_ica_components
+                ).pack(side="left", padx=5)
+            
         except Exception as e:
             print(f"Error creating visualization controls: {str(e)}")
             raise
@@ -1551,14 +1570,15 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             text_widget.insert(tk.END, "- Standardization: StandardScaler\n")
             text_widget.insert(tk.END, f"- Input dimensions: {len(self.pca_instance.original_dims)}\n\n")
 
-            # Explained variance information
-            text_widget.insert(tk.END, "Explained Variance:\n", "heading")
+            # Eigenvalues and explained variance information
+            text_widget.insert(tk.END, "Eigenvalues and Explained Variance:\n", "heading")
+            eigenvalues = self.pca_instance.pca.explained_variance_
             exp_var = self.pca_instance.explained_variance_ratio_
             cumulative_var = np.cumsum(exp_var)
             
-            for i, (var, cum_var) in enumerate(zip(exp_var, cumulative_var)):
+            for i, (eig, var, cum_var) in enumerate(zip(eigenvalues, exp_var, cumulative_var)):
                 text_widget.insert(tk.END, 
-                    f"PC{i+1}: {var:.3f} ({cum_var:.3f} cumulative)\n")
+                    f"PC{i+1}: λ={eig:.3f}, {var:.3f} variance ({cum_var:.3f} cumulative)\n")
             text_widget.insert(tk.END, "\n")
 
             # Variance contributions
@@ -2341,6 +2361,27 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
         except Exception as e:
             print(f"Error updating ICA plot: {str(e)}")
             messagebox.showerror("Error", f"Failed to update ICA plot: {str(e)}")
+
+    def update_ica_components(self):
+        """Update ICA analysis with new number of components"""
+        try:
+            n_components = int(self.ica_n_components.get())
+            if n_components < 1:
+                raise ValueError("Number of components must be positive")
+                
+            # Perform ICA with new component number
+            if self.ica_instance.perform_ica(self.pca_instance.current_ratings, n_components=n_components):
+                # Update visualizations
+                self.update_summary("ica")
+                self.update_plot("ica")
+                messagebox.showinfo("Success", f"ICA updated with {n_components} components")
+            else:
+                messagebox.showerror("Error", "Failed to update ICA analysis")
+                
+        except ValueError as e:
+            messagebox.showerror("Error", str(e))
+        except Exception as e:
+            messagebox.showerror("Error", f"Error updating ICA: {str(e)}")
 
 # If you want to run directly from this file
 if __name__ == "__main__":
