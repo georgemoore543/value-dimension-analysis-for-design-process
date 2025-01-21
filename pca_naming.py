@@ -31,6 +31,8 @@ def generate_pca_names(pca_results, prompts_df, n_components):
         # 3. Generate names for components
         results = []
         for i in range(n_components):
+            print(f"\nDEBUG: PCA results received for PC{i+1}:")
+            print(f"top_dims: {pca_results.get(f'pc_{i+1}_top_dims', '')}")
             pc_data = {
                 'pc_num': i + 1,
                 'top_dims': pca_results.get(f'pc_{i+1}_top_dims', ''),

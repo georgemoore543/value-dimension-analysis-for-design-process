@@ -167,6 +167,17 @@ class ValueDimensionPCA:
             print(f"Combined dimensions shape: {self.value_dims.shape}")
             print(f"Available columns: {self.value_dims.columns.tolist()}")
             
+            # Add this: Create a dictionary mapping dimensions to their definitions
+            if 'dim_definitions' in self.value_dims.columns:
+                self.dim_definitions = dict(zip(
+                    self.value_dims['value dimensions'],
+                    self.value_dims['dim_definitions']
+                ))
+                print(f"Stored {len(self.dim_definitions)} dimension definitions")
+            else:
+                self.dim_definitions = {}
+                print("No dimension definitions found")
+            
             # Check for missing definitions after loading dimensions
             if 'dim_definitions' in self.value_dims.columns:
                 missing_dims, missing_count = self.analyze_missing_definitions()
@@ -623,6 +634,9 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
         self.dims_paths = []
         self.ratings_count = tk.StringVar(value="1")
         self.dims_count = tk.StringVar(value="1")
+        
+        # Add ICA components variable
+        self.ica_n_components = tk.StringVar(value="5")  # Default to 5 components
         
         # Create initial widgets
         self.create_initial_widgets()
@@ -1201,18 +1215,35 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
 
             # Generate names based on analysis type
             if analysis_type == "pca":
+                # Add these debug prints
+                print("\nDEBUG: Available dimension definitions:")
+                print(instance.dim_definitions if hasattr(instance, 'dim_definitions') else "No dim_definitions found")
+                
                 # Format PCA results as expected by generate_pca_names
                 results_dict = {}
                 for i, comp in enumerate(instance.pca.components_):
                     sorted_indices = abs(comp).argsort()[::-1]
-                    top_dims = [instance.original_dims[idx] for idx in sorted_indices[:5]]
+                    top_dims = []
+                    for idx in sorted_indices[:5]:
+                        dim_name = instance.original_dims[idx]
+                        # Remove '_Rating' suffix to match the definition keys
+                        definition_key = dim_name.replace('_Rating', '')
+                        definition = instance.dim_definitions.get(definition_key, '')
+                        loading = comp[idx]
+                        dim_info = f"{dim_name} (loading: {loading:.3f})"
+                        if definition:
+                            dim_info += f"\nDefinition: {definition}"
+                        top_dims.append(dim_info)
                     
-                    high_indices = comp.argsort()[::-1][:5]
-                    low_indices = comp.argsort()[:5]
-                    
-                    results_dict[f'pc_{i+1}_top_dims'] = ', '.join(map(str, top_dims))
-                    results_dict[f'pc_{i+1}_high_prompts'] = ', '.join([instance.original_dims[idx] for idx in high_indices])
-                    results_dict[f'pc_{i+1}_low_prompts'] = ', '.join([instance.original_dims[idx] for idx in low_indices])
+                    results_dict[f'pc_{i+1}_top_dims'] = '\n'.join(top_dims)
+                    results_dict[f'pc_{i+1}_high_prompts'] = '\n'.join([
+                        f"{instance.original_dims[idx]} (loading: {comp[idx]:.3f})"
+                        for idx in sorted_indices[:5]
+                    ])
+                    results_dict[f'pc_{i+1}_low_prompts'] = '\n'.join([
+                        f"{instance.original_dims[idx]} (loading: {comp[idx]:.3f})"
+                        for idx in sorted_indices[-5:]
+                    ])
                 
                 prompts_df = pd.DataFrame({'prompt': instance.original_dims})
                 
@@ -1223,6 +1254,9 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                     n_components=min(8, len(instance.pca.components_))
                 )
             else:  # ICA
+                # Copy dimension definitions from PCA instance to ICA instance
+                instance.dim_definitions = self.pca_instance.dim_definitions
+                
                 # Format ICA results
                 results_dict = {}
                 n_features = len(self.pca_instance.original_dims)
@@ -1234,23 +1268,33 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                     # Get indices for top dimensions (both positive and negative)
                     sorted_indices = abs(coeffs).argsort()[::-1]
                     sorted_indices = sorted_indices[sorted_indices < n_features]
-                    top_dims = [f"{self.pca_instance.original_dims[idx]} ({coeffs[idx]:.3f})" 
-                               for idx in sorted_indices[:5]]
                     
-                    # Get indices for high and low loading prompts
-                    high_indices = coeffs.argsort()[::-1][:5]
-                    low_indices = coeffs.argsort()[:5]
+                    # Define high and low indices
+                    high_indices = sorted_indices[:5]  # Top 5 positive loadings
+                    low_indices = sorted_indices[-5:]  # Bottom 5 negative loadings
+                    
+                    # Format top dimensions with definitions
+                    top_dims = []
+                    for idx in sorted_indices[:5]:
+                        dim_name = self.pca_instance.original_dims[idx]
+                        definition_key = dim_name.replace('_Rating', '')
+                        definition = instance.dim_definitions.get(definition_key, '')
+                        loading = coeffs[idx]
+                        dim_info = f"{dim_name} (loading: {loading:.3f})"
+                        if definition:
+                            dim_info += f"\nDefinition: {definition}"
+                        top_dims.append(dim_info)
                     
                     # Store formatted results
-                    results_dict[f'ic_{i+1}_top_dims'] = ', '.join(top_dims)
-                    results_dict[f'ic_{i+1}_high_prompts'] = ', '.join(
-                        [f"{self.pca_instance.original_dims[idx]} ({coeffs[idx]:.3f})" 
-                         for idx in high_indices if idx < n_features]
-                    )
-                    results_dict[f'ic_{i+1}_low_prompts'] = ', '.join(
-                        [f"{self.pca_instance.original_dims[idx]} ({coeffs[idx]:.3f})" 
-                         for idx in low_indices if idx < n_features]
-                    )
+                    results_dict[f'ic_{i+1}_top_dims'] = '\n'.join(top_dims)
+                    results_dict[f'ic_{i+1}_high_prompts'] = '\n'.join([
+                        f"{self.pca_instance.original_dims[idx]} (loading: {coeffs[idx]:.3f})"
+                        for idx in high_indices if idx < n_features
+                    ])
+                    results_dict[f'ic_{i+1}_low_prompts'] = '\n'.join([
+                        f"{self.pca_instance.original_dims[idx]} (loading: {coeffs[idx]:.3f})"
+                        for idx in low_indices if idx < n_features
+                    ])
                     results_dict[f'ic_{i+1}_kurtosis'] = kurt_score
                 
                 prompts_df = pd.DataFrame({'prompt': self.pca_instance.original_dims})
@@ -1374,6 +1418,22 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                 ).pack(side="left", padx=5)
             
             print("Control frame created successfully")
+            
+            if analysis_type == "ica":
+                # Add ICA components control
+                ica_control_frame = ttk.LabelFrame(control_frame, text="ICA Settings", padding="5")
+                ica_control_frame.pack(fill="x", pady=5)
+                
+                ttk.Label(ica_control_frame, text="Number of Components:").pack(side="left", padx=5)
+                ica_comp_entry = ttk.Entry(ica_control_frame, textvariable=self.ica_n_components, width=3)
+                ica_comp_entry.pack(side="left")
+                
+                # Add apply button to update ICA with new component number
+                ttk.Button(
+                    ica_control_frame,
+                    text="Apply",
+                    command=self.update_ica_components
+                ).pack(side="left", padx=5)
             
         except Exception as e:
             print(f"Error creating visualization controls: {str(e)}")
@@ -1551,14 +1611,15 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             text_widget.insert(tk.END, "- Standardization: StandardScaler\n")
             text_widget.insert(tk.END, f"- Input dimensions: {len(self.pca_instance.original_dims)}\n\n")
 
-            # Explained variance information
-            text_widget.insert(tk.END, "Explained Variance:\n", "heading")
+            # Eigenvalues and explained variance information
+            text_widget.insert(tk.END, "Eigenvalues and Explained Variance:\n", "heading")
+            eigenvalues = self.pca_instance.pca.explained_variance_
             exp_var = self.pca_instance.explained_variance_ratio_
             cumulative_var = np.cumsum(exp_var)
             
-            for i, (var, cum_var) in enumerate(zip(exp_var, cumulative_var)):
+            for i, (eig, var, cum_var) in enumerate(zip(eigenvalues, exp_var, cumulative_var)):
                 text_widget.insert(tk.END, 
-                    f"PC{i+1}: {var:.3f} ({cum_var:.3f} cumulative)\n")
+                    f"PC{i+1}: λ={eig:.3f}, {var:.3f} variance ({cum_var:.3f} cumulative)\n")
             text_widget.insert(tk.END, "\n")
 
             # Variance contributions
@@ -2341,6 +2402,27 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
         except Exception as e:
             print(f"Error updating ICA plot: {str(e)}")
             messagebox.showerror("Error", f"Failed to update ICA plot: {str(e)}")
+
+    def update_ica_components(self):
+        """Update ICA analysis with new number of components"""
+        try:
+            n_components = int(self.ica_n_components.get())
+            if n_components < 1:
+                raise ValueError("Number of components must be positive")
+                
+            # Perform ICA with new component number
+            if self.ica_instance.perform_ica(self.pca_instance.current_ratings, n_components=n_components):
+                # Update visualizations
+                self.update_summary("ica")
+                self.update_plot("ica")
+                messagebox.showinfo("Success", f"ICA updated with {n_components} components")
+            else:
+                messagebox.showerror("Error", "Failed to update ICA analysis")
+                
+        except ValueError as e:
+            messagebox.showerror("Error", str(e))
+        except Exception as e:
+            messagebox.showerror("Error", f"Error updating ICA: {str(e)}")
 
 # If you want to run directly from this file
 if __name__ == "__main__":
