@@ -13,13 +13,15 @@ def select_file():
     )
     return file_path
 
-def calculate_metrics(df):
-    """Calculate average ratings and raw sum of squares for each prompt."""
+def calculate_metrics(df, num_dimensions, max_rating):
+    """Calculate average ratings and normalized raw sum of squares for each prompt."""
     # Calculate mean rating for each prompt
     means = df.mean(axis=1)
     
-    # Calculate raw sum of squares (sum of squared ratings)
-    sum_squares = df.apply(lambda row: sum(row**2), axis=1)
+    # Calculate normalized sum of squares
+    # Divide by (num_dimensions * max_rating^2) since we're dealing with squared values
+    normalization_factor = float(num_dimensions) * (float(max_rating) ** 2)
+    sum_squares = df.apply(lambda row: sum(row**2), axis=1) / normalization_factor
     
     # Create DataFrame with results
     results = pd.DataFrame({
@@ -55,9 +57,11 @@ def get_plot_info():
         print(f"\nFramework {i+1}:")
         framework_name = input("Please enter the name of the value dimensions framework: ")
         num_dimensions = input("Please enter the number of dimensions used in the framework: ")
+        max_rating = input("Please enter the maximum possible rating value for this framework: ")
         frameworks.append({
             'name': framework_name,
             'dimensions': num_dimensions,
+            'max_rating': max_rating,
             'color': ['blue', 'red', 'green', 'purple', 'orange', 'brown'][i]
         })
     
@@ -93,7 +97,7 @@ def create_plot(results_list, dataset_name, frameworks):
                    zorder=2)
     
     plt.xlabel('Rank')
-    plt.ylabel('Sum of Squares')
+    plt.ylabel('Normalized Sum of Squares')
     
     # Set title based on number of frameworks
     if len(frameworks) <= 2:
@@ -155,7 +159,10 @@ def main():
                 ratings[col] = pd.to_numeric(ratings[col], errors='coerce')
             
             dataframes.append(ratings)
-            results = calculate_metrics(ratings)
+            # Pass number of dimensions and max rating to calculate_metrics
+            results = calculate_metrics(ratings, 
+                                     framework['dimensions'], 
+                                     framework['max_rating'])
             results_list.append(results)
         
         # Validate prompts across frameworks
