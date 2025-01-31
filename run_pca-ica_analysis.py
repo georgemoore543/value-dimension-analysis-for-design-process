@@ -1807,11 +1807,30 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                 fig.write_html(temp_file)
                 webbrowser.open(f'file://{os.path.realpath(temp_file)}')
                 
-                # Create a label in the tkinter window
+                # Create a frame for the labels and save button
+                info_frame = ttk.Frame(frame)
+                info_frame.pack(pady=20)
+                
                 ttk.Label(
-                    frame, 
+                    info_frame, 
                     text="PCA scatter matrix opened in web browser.\nClose browser tab when finished viewing."
-                ).pack(pady=20)
+                ).pack(side="left", padx=5)
+                
+                def save_plot():
+                    save_path = filedialog.asksaveasfilename(
+                        defaultextension=".html",
+                        filetypes=[("HTML files", "*.html")],
+                        title="Save PCA Scatter Matrix"
+                    )
+                    if save_path:
+                        fig.write_html(save_path)
+                        messagebox.showinfo("Success", f"Plot saved to:\n{save_path}")
+                
+                ttk.Button(
+                    info_frame,
+                    text="Save Plot",
+                    command=save_plot
+                ).pack(side="left", padx=5)
                 
                 # Inside create_matrix_plot method, add debug prints:
                 if hasattr(instance, 'prompts'):
