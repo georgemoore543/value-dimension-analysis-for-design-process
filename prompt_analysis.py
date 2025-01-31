@@ -116,6 +116,60 @@ def create_plot(results_list, dataset_name, frameworks):
     
     return plt.gcf()
 
+def create_agreement_plots(results_list, dataset_name, frameworks):
+    """Create separate agreement plots using each framework as the ranking basis."""
+    plots = []
+    
+    # Create a plot for each framework as the ranking basis
+    for base_idx, base_framework in enumerate(frameworks):
+        plt.figure(figsize=(12, 8))
+        base_results = results_list[base_idx]
+        
+        # Create mapping of prompts to their position in base framework
+        prompt_order = base_results.set_index('Prompt')['Rank']
+        
+        # Plot base framework in black
+        plt.scatter(base_results['Rank'], base_results['Sum_Squares'],
+                   color='black', alpha=0.6,
+                   label=f"{base_framework['dimensions']}-dimensional, {base_framework['name']} framework")
+        
+        # Plot top 10 for base framework
+        top_10_base = base_results[base_results['Rank'] <= 10]
+        plt.scatter(top_10_base['Rank'], top_10_base['Sum_Squares'],
+                   color='black', marker='*', s=200,
+                   zorder=2)
+        
+        # Plot other frameworks
+        for i, (results, framework) in enumerate(zip(results_list, frameworks)):
+            if i != base_idx:  # Skip base framework as it's already plotted
+                # Reorder this framework's results according to base framework
+                ordered_results = results.set_index('Prompt')
+                ordered_results['BaseRank'] = ordered_results.index.map(prompt_order)
+                
+                # Plot regular points
+                plt.scatter(ordered_results['BaseRank'], ordered_results['Sum_Squares'],
+                          color=framework['color'], alpha=0.6,
+                          label=f"{framework['dimensions']}-dimensional, {framework['name']} framework")
+                
+                # Plot top 10
+                top_10 = results[results['Rank'] <= 10]
+                top_10_ordered = top_10.set_index('Prompt')
+                top_10_ordered['BaseRank'] = top_10_ordered.index.map(prompt_order)
+                plt.scatter(top_10_ordered['BaseRank'], top_10_ordered['Sum_Squares'],
+                          color=framework['color'], marker='*', s=200,
+                          zorder=2)
+        
+        plt.xlabel(f'Rank (based on {base_framework["name"]} framework)')
+        plt.ylabel('Normalized Sum of Squares')
+        plt.title(f'Framework Agreement Plot: Rankings based on {base_framework["name"]} framework\nDataset: {dataset_name}')
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        plots.append(plt.gcf())
+    
+    return plots
+
 def save_plot():
     """Ask user if they want to save the plot and handle saving."""
     root = Tk()
@@ -168,9 +222,15 @@ def main():
         # Validate prompts across frameworks
         validate_prompts(dataframes)
         
-        # Create and display plot
+        # Create and display original comparison plot
         fig = create_plot(results_list, dataset_name, frameworks)
         plt.show()
+        
+        # Create and display agreement plots
+        agreement_plots = create_agreement_plots(results_list, dataset_name, frameworks)
+        for plot in agreement_plots:
+            plt.figure(plot.number)
+            plt.show()
         
         # Handle plot saving
         save_plot()
