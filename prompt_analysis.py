@@ -98,6 +98,7 @@ def create_plot(results_list, dataset_name, frameworks):
     
     plt.xlabel('Rank')
     plt.ylabel('Normalized Sum of Squares')
+    plt.ylim(0, 1)  # Set y-axis limits from 0 to 1
     
     # Set title based on number of frameworks
     if len(frameworks) <= 2:
@@ -161,6 +162,7 @@ def create_agreement_plots(results_list, dataset_name, frameworks):
         
         plt.xlabel(f'Rank (based on {base_framework["name"]} framework)')
         plt.ylabel('Normalized Sum of Squares')
+        plt.ylim(0, 1)  # Set y-axis limits from 0 to 1
         plt.title(f'Framework Agreement Plot: Rankings based on {base_framework["name"]} framework\nDataset: {dataset_name}')
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.grid(True, alpha=0.3)
