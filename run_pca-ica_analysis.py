@@ -1717,6 +1717,110 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             print(f"Error creating scatter plot: {str(e)}")
             raise
 
+    def show_component_selection_dialog(self, n_components):
+        """Show dialog for PCA component selection"""
+        try:
+            # Create dialog window
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Select Principal Components")
+            dialog.geometry("300x400")
+            
+            # Create main frame with padding
+            main_frame = ttk.Frame(dialog, padding="10")
+            main_frame.pack(fill="both", expand=True)
+            
+            # Instructions
+            ttk.Label(
+                main_frame,
+                text="Select at least one principal component:",
+                padding="5"
+            ).pack(fill="x")
+            
+            # Create scrollable frame for checkboxes
+            canvas = tk.Canvas(main_frame)
+            scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+            scrollable_frame = ttk.Frame(canvas)
+            
+            scrollable_frame.bind(
+                "<Configure>",
+                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+            )
+            
+            canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+            
+            # Create checkboxes for each component
+            selected_components = []
+            checkboxes = []
+            for i in range(n_components):
+                var = tk.BooleanVar()
+                checkbox = ttk.Checkbutton(
+                    scrollable_frame,
+                    text=f"PC{i+1}",
+                    variable=var,
+                    command=lambda v=var: self.update_selection_status(checkboxes, status_label)
+                )
+                checkbox.pack(anchor="w", pady=2)
+                checkboxes.append((checkbox, var))
+            
+            canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+            
+            # Status label
+            status_label = ttk.Label(main_frame, text="Select at least one component")
+            status_label.pack(pady=5)
+            
+            # Control buttons
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill="x", pady=10)
+            
+            def get_selected_components():
+                selected = [i+1 for i, (_, var) in enumerate(checkboxes) if var.get()]
+                if len(selected) < 1:
+                    messagebox.showwarning("Warning", "Please select at least one component")
+                    return None
+                return selected
+            
+            def confirm_selection():
+                selected = get_selected_components()
+                if selected:
+                    dialog.selected_components = selected
+                    dialog.destroy()
+            
+            ttk.Button(
+                button_frame,
+                text="Create Matrix",
+                command=confirm_selection
+            ).pack(side="left", padx=5)
+            
+            ttk.Button(
+                button_frame,
+                text="Cancel",
+                command=dialog.destroy
+            ).pack(side="left", padx=5)
+            
+            # Make dialog modal
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            # Wait for dialog to close
+            self.root.wait_window(dialog)
+            
+            # Return selected components if dialog was not cancelled
+            return getattr(dialog, 'selected_components', None)
+            
+        except Exception as e:
+            print(f"Error in component selection dialog: {str(e)}")
+            return None
+
+    def update_selection_status(self, checkboxes, status_label):
+        """Update status label based on checkbox selection"""
+        selected_count = sum(var.get() for _, var in checkboxes)
+        if selected_count < 1:
+            status_label.config(text="Select at least one component")
+        else:
+            status_label.config(text=f"{selected_count} component(s) selected")
+
     def create_matrix_plot(self, instance, analysis_type="pca"):
         """Create correlation matrix plot for PCA or ICA"""
         try:
@@ -1730,24 +1834,30 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             self.root.unbind_all("<MouseWheel>")
             
             if analysis_type == "pca":
+                # Show component selection dialog
+                n_components = instance.pca_ratings.shape[1]
+                selected_components = self.show_component_selection_dialog(n_components)
+                
+                if selected_components is None:
+                    return  # User cancelled or closed the dialog
+                
                 # Create a container frame
                 container = ttk.Frame(frame)
                 container.pack(fill="both", expand=True)
                 
-                # Create Plotly scatter matrix for PCA
+                # Create Plotly scatter matrix for selected PCA components
+                selected_cols = [f"PC{i}" for i in selected_components]
+                
                 pca_df = pd.DataFrame(
-                    instance.pca_ratings,
-                    columns=[f"PC{i+1}" for i in range(instance.pca_ratings.shape[1])]
+                    instance.pca_ratings[:, [i-1 for i in selected_components]],
+                    columns=selected_cols
                 )
                 
                 if hasattr(instance, 'prompts'):
                     # Format prompts with line wrapping and character limit
                     def format_prompt(text):
-                        # Truncate to total limit if needed
                         if len(text) > 210:
                             text = text[:207] + "..."
-                        
-                        # Add line breaks every 70 characters at word boundaries
                         words = text.split()
                         lines = []
                         current_line = []
@@ -1778,8 +1888,8 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                     # Create scatter matrix with custom hover template
                     fig = px.scatter_matrix(
                         pca_df,
-                        dimensions=[col for col in pca_df.columns if col.startswith('PC')],
-                        title="PCA Components Scatter Matrix",
+                        dimensions=selected_cols,
+                        title=f"PCA Components Scatter Matrix (Selected Components: {', '.join(selected_cols)})",
                         hover_data=instance.original_dims + ['prompt_text']
                     )
                     
@@ -1791,8 +1901,8 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                     # Create basic scatter matrix if no prompts available
                     fig = px.scatter_matrix(
                         pca_df,
-                        dimensions=pca_df.columns,
-                        title="PCA Components Scatter Matrix"
+                        dimensions=selected_cols,
+                        title=f"PCA Components Scatter Matrix (Selected Components: {', '.join(selected_cols)})"
                     )
                 
                 # Update layout for better visibility
@@ -1832,19 +1942,13 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                     command=save_plot
                 ).pack(side="left", padx=5)
                 
-                # Inside create_matrix_plot method, add debug prints:
-                if hasattr(instance, 'prompts'):
-                    print("Prompts attribute exists")
-                    print("Type:", type(instance.prompts))
-                    print("Sample prompts:", dict(list(instance.prompts.items())[:2]))
-                else:
-                    print("No 'prompts' attribute found")
-                
-                # Also check the ratings data
-                print("\nDEBUG: Checking ratings data:")
-                print("Original dimensions:", instance.original_dims[:5])
-                print("Current ratings columns:", instance.current_ratings.columns.tolist()[:5])
-                
+                # Add button to recreate matrix with different components
+                ttk.Button(
+                    info_frame,
+                    text="Select Different Components",
+                    command=lambda: self.create_matrix_plot(instance, "pca")
+                ).pack(side="left", padx=5)
+            
             else:  # ICA
                 data = instance.mixing_matrix.T
                 dims = self.pca_instance.original_dims
@@ -1887,10 +1991,6 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                 
         except Exception as e:
             print(f"Error creating {analysis_type.upper()} matrix plot: {str(e)}")
-            print(f"Additional debug info:")
-            if analysis_type == "ica":
-                print(f"ICA mixing matrix shape: {instance.mixing_matrix.shape}")
-                print(f"Number of dimensions in PCA: {len(self.pca_instance.original_dims)}")
             raise
 
     def create_kurtosis_plot(self, instance):
