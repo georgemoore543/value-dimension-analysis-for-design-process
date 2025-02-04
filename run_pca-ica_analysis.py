@@ -1406,7 +1406,7 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             # Plot type selection
             plot_types = ["scatter", "matrix", "heatmap"]
             if analysis_type == "ica":
-                plot_types.extend(["kurtosis", "signals", "mixing"])
+                plot_types = ["scatter", "histogram", "heatmap", "kurtosis", "signals", "mixing"]  # Changed 'matrix' to 'histogram'
             
             for plot_type in plot_types:
                 ttk.Radiobutton(
@@ -1466,7 +1466,7 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                     ic1 = int(self.ic_x.get()) - 1
                     ic2 = int(self.ic_y.get()) - 1
                     self.create_ica_scatter_plot(ic1, ic2)
-                elif plot_type == "matrix":
+                elif plot_type == "histogram":  # Changed from "matrix" to "histogram"
                     self.create_matrix_plot(instance, "ica")
                 elif plot_type == "heatmap":
                     self.create_heatmap_plot(instance, "ica")
@@ -1717,12 +1717,13 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             print(f"Error creating scatter plot: {str(e)}")
             raise
 
-    def show_component_selection_dialog(self, n_components):
-        """Show dialog for PCA component selection"""
+    def show_component_selection_dialog(self, n_components, analysis_type="pca"):
+        """Show dialog for PCA/ICA component selection"""
         try:
             # Create dialog window
             dialog = tk.Toplevel(self.root)
-            dialog.title("Select Principal Components")
+            prefix = "PC" if analysis_type == "pca" else "IC"
+            dialog.title(f"Select {'Principal' if analysis_type == 'pca' else 'Independent'} Components")
             dialog.geometry("300x400")
             
             # Create main frame with padding
@@ -1732,7 +1733,7 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             # Instructions
             ttk.Label(
                 main_frame,
-                text="Select at least one principal component:",
+                text=f"Select at least one {prefix}:",
                 padding="5"
             ).pack(fill="x")
             
@@ -1756,7 +1757,7 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                 var = tk.BooleanVar()
                 checkbox = ttk.Checkbutton(
                     scrollable_frame,
-                    text=f"PC{i+1}",
+                    text=f"{prefix}{i+1}",
                     variable=var,
                     command=lambda v=var: self.update_selection_status(checkboxes, status_label)
                 )
@@ -1789,7 +1790,7 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             
             ttk.Button(
                 button_frame,
-                text="Create Matrix",
+                text="Create Matrix" if analysis_type == "pca" else "Create Histograms",
                 command=confirm_selection
             ).pack(side="left", padx=5)
             
@@ -1950,45 +1951,167 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                 ).pack(side="left", padx=5)
             
             else:  # ICA
-                data = instance.mixing_matrix.T
-                dims = self.pca_instance.original_dims
+                print("\nDEBUG: Starting ICA matrix plot creation...")
+                print(f"ICA instance exists: {hasattr(self, 'ica_instance')}")
+                if hasattr(self, 'ica_instance'):
+                    print(f"ICA components exists: {hasattr(self.ica_instance, 'ica_components')}")
+                    if hasattr(self.ica_instance, 'ica_components'):
+                        print(f"ICA components shape: {self.ica_instance.ica_components.shape}")
                 
-                # Create figure with subplots
-                n_components = data.shape[0]
-                n_cols = min(4, n_components)
-                n_rows = (n_components + n_cols - 1) // n_cols
+                # Show component selection dialog
+                n_components = instance.ica_components.shape[1]
+                print(f"Number of components detected: {n_components}")
                 
-                fig = Figure(figsize=(12, 3*n_rows))
+                selected_components = self.show_component_selection_dialog(n_components, "ica")  # Added analysis_type parameter
+                print(f"Selected components: {selected_components}")
                 
-                for i in range(n_components):
-                    ax = fig.add_subplot(n_rows, n_cols, i+1)
-                    component_data = data[i]
-                    valid_indices = np.where(np.arange(len(component_data)) < len(dims))[0]
-                    sorted_indices = valid_indices[np.argsort(np.abs(component_data[valid_indices]))[::-1]]
-                    n_dims = min(12, len(sorted_indices))
-                    top_indices = sorted_indices[:n_dims]
+                if selected_components is None:
+                    print("No components selected or dialog cancelled")
+                    return  # User cancelled or closed the dialog
+                
+                # Create container frame
+                container = ttk.Frame(frame)
+                container.pack(fill="both", expand=True)
+                
+                # Create subplot layout
+                n_selected = len(selected_components)
+                n_cols = min(2, n_selected)  # Maximum 2 columns
+                n_rows = (n_selected + n_cols - 1) // n_cols
+                
+                # Create subplots for histograms
+                fig = make_subplots(
+                    rows=n_rows, 
+                    cols=n_cols,
+                    subplot_titles=[f"IC{i}" for i in selected_components]
+                )
+                
+                # Function to format prompt text with line wrapping
+                def format_prompt(text):
+                    if len(text) > 140:
+                        text = text[:140] + "..."
                     
-                    if len(top_indices) > 0:
-                        bars = ax.bar(range(len(top_indices)), component_data[top_indices])
-                        for bar in bars:
-                            bar.set_color('red' if bar.get_height() < 0 else 'blue')
+                    result = []
+                    while text:
+                        if len(text) <= 70:
+                            result.append(text)
+                            break
                         
-                        ax.set_title(f"IC{i+1}")
-                        ax.set_xticks(range(len(top_indices)))
-                        ax.set_xticklabels([dims[idx] for idx in top_indices], rotation=45, ha='right')
-                        ax.grid(True, alpha=0.3)
+                        split_point = text[:70].rfind(' ')
+                        if split_point == -1:
+                            split_point = 70
+                        
+                        result.append(text[:split_point])
+                        text = text[split_point:].lstrip()
+                    
+                    return "<br>".join(result)
                 
-                fig.tight_layout()
+                # Add histograms for each selected component
+                for idx, comp_num in enumerate(selected_components):
+                    row = idx // n_cols + 1
+                    col = idx % n_cols + 1
+                    
+                    # Get component data
+                    comp_data = instance.ica_components[:, comp_num-1]
+                    
+                    # Create bins with numpy first
+                    hist, bin_edges = np.histogram(comp_data, bins=30)
+                    bin_indices = np.clip(np.digitize(comp_data, bin_edges) - 1, 0, len(hist) - 1)
+                    
+                    # Create hover text for each bin
+                    hover_text = []
+                    for bin_idx in range(len(hist)):
+                        # Get indices of data points in this bin
+                        points_in_bin = np.where(bin_indices == bin_idx)[0]
+                        
+                        # Format prompts for these points
+                        if hasattr(self.pca_instance, 'prompts'):
+                            bin_prompts = []
+                            for i in points_in_bin:
+                                if i < len(self.pca_instance.prompts):
+                                    prompt = self.pca_instance.prompts[i]
+                                    formatted_prompt = format_prompt(f"Prompt: {prompt}")
+                                    bin_prompts.append(formatted_prompt)
+                            
+                            prompt_text = "<br>".join(bin_prompts) if bin_prompts else "No prompts in this bin"
+                        else:
+                            prompt_text = f"Count: {len(points_in_bin)}"
+                        
+                        hover_text.append(prompt_text)
+                    
+                    # Add histogram with hover information, using our exact bin edges
+                    fig.add_trace(
+                        go.Histogram(
+                            x=comp_data,
+                            name=f"IC{comp_num}",
+                            xbins=dict(
+                                start=bin_edges[0],
+                                end=bin_edges[-1],
+                                size=(bin_edges[-1] - bin_edges[0]) / 30
+                            ),
+                            autobinx=False,  # Force Plotly to use our bin settings
+                            showlegend=False,
+                            hovertemplate="<b>Bin Information</b><br>" +
+                                        "Count: %{y}<br>" +
+                                        "Range: %{x}<br>" +
+                                        "%{text}<br>" +
+                                        "<extra></extra>",
+                            text=hover_text
+                        ),
+                        row=row,
+                        col=col
+                    )
+                    
+                    # Update layout for this subplot
+                    fig.update_xaxes(title_text=f"IC{comp_num} Values", row=row, col=col)
+                    fig.update_yaxes(title_text="Count", row=row, col=col)
                 
-                # Create canvas for ICA
-                canvas = FigureCanvasTkAgg(fig, master=frame)
-                canvas.draw()
-                canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+                # Update overall layout
+                fig.update_layout(
+                    height=300 * n_rows,
+                    width=800,
+                    title=f"ICA Components Histograms (Selected Components: {', '.join([f'IC{i}' for i in selected_components])})",
+                    title_x=0.5,
+                    showlegend=False,
+                    template="plotly_white"
+                )
                 
-                # Add toolbar for ICA
-                toolbar = NavigationToolbar2Tk(canvas, frame)
-                toolbar.update()
+                # Create a temporary HTML file and open in browser
+                temp_file = "ica_histograms.html"
+                fig.write_html(temp_file)
+                webbrowser.open(f'file://{os.path.realpath(temp_file)}')
                 
+                # Create a frame for the labels and buttons
+                info_frame = ttk.Frame(frame)
+                info_frame.pack(pady=20)
+                
+                ttk.Label(
+                    info_frame, 
+                    text="ICA histograms opened in web browser.\nClose browser tab when finished viewing."
+                ).pack(side="left", padx=5)
+                
+                def save_plot():
+                    save_path = filedialog.asksaveasfilename(
+                        defaultextension=".html",
+                        filetypes=[("HTML files", "*.html")],
+                        title="Save ICA Histograms"
+                    )
+                    if save_path:
+                        fig.write_html(save_path)
+                        messagebox.showinfo("Success", f"Plot saved to:\n{save_path}")
+                
+                ttk.Button(
+                    info_frame,
+                    text="Save Plot",
+                    command=save_plot
+                ).pack(side="left", padx=5)
+                
+                # Add button to recreate histograms with different components
+                ttk.Button(
+                    info_frame,
+                    text="Select Different Components",
+                    command=lambda: self.create_matrix_plot(instance, "ica")
+                ).pack(side="left", padx=5)
+            
         except Exception as e:
             print(f"Error creating {analysis_type.upper()} matrix plot: {str(e)}")
             raise
