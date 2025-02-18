@@ -14,7 +14,7 @@ def initialize_client():
             'openai_api_key': None,
             'model': 'gpt-3.5-turbo',
             'temperature': 0.7,
-            'max_tokens': 150
+            'max_tokens': 2000
         }
         
         # Load API key from .env file

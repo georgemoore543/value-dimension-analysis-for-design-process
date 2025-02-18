@@ -200,7 +200,7 @@ class LLMHandler:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7,
-                max_tokens=150
+                max_tokens=2000
             )
 
             # Parse the response using parse_name_response instead of parse_response
@@ -329,7 +329,7 @@ Explanation: [your explanation]"""
                     }
                 ],
                 temperature=self.config.get('temperature', 0.7),
-                max_tokens=self.config.get('max_tokens', 200)
+                max_tokens=self.config.get('max_tokens', 2000)
             )
             
             content = response.choices[0].message.content
@@ -415,7 +415,7 @@ Explanation: [your explanation]"""
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.7,
-                    max_tokens=150
+                    max_tokens=2000
                 )
                 
                 definition = response.choices[0].message.content.strip()

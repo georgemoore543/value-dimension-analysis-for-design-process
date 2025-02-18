@@ -607,7 +607,7 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
             'openai_api_key': os.getenv('OPENAI_API_KEY'),  # Still using os.getenv, but now it reads from .env
             'model': 'gpt-3.5-turbo',
             'temperature': 0.7,
-            'max_tokens': 150
+            'max_tokens': 2000
         })
         
         # You might also want to add error handling:
