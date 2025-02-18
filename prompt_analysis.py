@@ -34,6 +34,9 @@ def calculate_metrics(df, num_dimensions, max_rating):
     results = results.sort_values('Mean_Rating', ascending=False)
     results['Rank'] = range(1, len(results) + 1)
     
+    print(f"Number of data points: {len(results)}")
+    print(f"Memory usage: {results.memory_usage().sum() / 1024 / 1024:.2f} MB")
+    
     return results
 
 def get_plot_info():
@@ -81,19 +84,19 @@ def validate_prompts(dataframes):
 
 def create_plot(results_list, dataset_name, frameworks):
     """Create and display the scatter plot for multiple frameworks."""
-    plt.figure(figsize=(12, 8))
+    plt.figure(figsize=(15, 10))  # Increased figure size
     
     # Plot data for each framework
     for results, framework in zip(results_list, frameworks):
-        # Plot regular points
+        # Plot regular points with smaller markers and increased transparency
         plt.scatter(results['Rank'], results['Sum_Squares'],
-                   color=framework['color'], alpha=0.6,
+                   color=framework['color'], alpha=0.4, s=30,  # Reduced size and opacity
                    label=f"{framework['dimensions']}-dimensional, {framework['name']} framework")
         
-        # Plot top 10 as stars
+        # Plot top 10 as stars with slightly smaller size
         top_10 = results[results['Rank'] <= 10]
         plt.scatter(top_10['Rank'], top_10['Sum_Squares'],
-                   color=framework['color'], marker='*', s=200,
+                   color=framework['color'], marker='*', s=150,  # Reduced star size
                    zorder=2)
     
     plt.xlabel('Rank')
@@ -123,24 +126,24 @@ def create_agreement_plots(results_list, dataset_name, frameworks):
     
     # Create a plot for each framework as the ranking basis
     for base_idx, base_framework in enumerate(frameworks):
-        plt.figure(figsize=(12, 8))
+        plt.figure(figsize=(15, 10))  # Increased figure size
         base_results = results_list[base_idx]
         
         # Create mapping of prompts to their position in base framework
         prompt_order = base_results.set_index('Prompt')['Rank']
         
-        # Plot base framework in black
+        # Plot base framework in black with smaller markers
         plt.scatter(base_results['Rank'], base_results['Sum_Squares'],
-                   color='black', alpha=0.6,
+                   color='black', alpha=0.4, s=30,  # Reduced size and opacity
                    label=f"{base_framework['dimensions']}-dimensional, {base_framework['name']} framework")
         
-        # Plot top 10 for base framework
+        # Plot top 10 for base framework with slightly smaller size
         top_10_base = base_results[base_results['Rank'] <= 10]
         plt.scatter(top_10_base['Rank'], top_10_base['Sum_Squares'],
-                   color='black', marker='*', s=200,
+                   color='black', marker='*', s=150,  # Reduced star size
                    zorder=2)
         
-        # Plot other frameworks
+        # Plot other frameworks with smaller markers
         for i, (results, framework) in enumerate(zip(results_list, frameworks)):
             if i != base_idx:  # Skip base framework as it's already plotted
                 # Reorder this framework's results according to base framework
@@ -149,7 +152,7 @@ def create_agreement_plots(results_list, dataset_name, frameworks):
                 
                 # Plot regular points
                 plt.scatter(ordered_results['BaseRank'], ordered_results['Sum_Squares'],
-                          color=framework['color'], alpha=0.6,
+                          color=framework['color'], alpha=0.4, s=30,  # Reduced size and opacity
                           label=f"{framework['dimensions']}-dimensional, {framework['name']} framework")
                 
                 # Plot top 10
@@ -157,7 +160,7 @@ def create_agreement_plots(results_list, dataset_name, frameworks):
                 top_10_ordered = top_10.set_index('Prompt')
                 top_10_ordered['BaseRank'] = top_10_ordered.index.map(prompt_order)
                 plt.scatter(top_10_ordered['BaseRank'], top_10_ordered['Sum_Squares'],
-                          color=framework['color'], marker='*', s=200,
+                          color=framework['color'], marker='*', s=150,  # Reduced star size
                           zorder=2)
         
         plt.xlabel(f'Rank (based on {base_framework["name"]} framework)')
@@ -225,12 +228,15 @@ def main():
         validate_prompts(dataframes)
         
         # Create and display original comparison plot
+        print("Creating comparison plot...")
         fig = create_plot(results_list, dataset_name, frameworks)
         plt.show()
         
         # Create and display agreement plots
+        print("Creating agreement plots...")
         agreement_plots = create_agreement_plots(results_list, dataset_name, frameworks)
-        for plot in agreement_plots:
+        for i, plot in enumerate(agreement_plots):
+            print(f"Displaying agreement plot {i+1}/{len(agreement_plots)}...")
             plt.figure(plot.number)
             plt.show()
         
