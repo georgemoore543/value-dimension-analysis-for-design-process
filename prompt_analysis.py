@@ -209,8 +209,21 @@ def main():
             
             # Read and process data
             df = pd.read_excel(file_path)
-            prompts = df.iloc[:, 1]
-            ratings = df.iloc[:, 2:-1]
+            
+            # Extract prompts from the 'Prompt' column
+            if 'Prompt' not in df.columns:
+                raise ValueError("Could not find 'Prompt' column in the Excel file")
+            prompts = df['Prompt']
+            
+            # Find rating columns (assuming they end with '_Rating')
+            rating_columns = [col for col in df.columns if col.endswith('_Rating')]
+            if not rating_columns:
+                raise ValueError("Could not find any rating columns (columns ending with '_Rating')")
+            
+            print(f"Found {len(rating_columns)} rating columns: {rating_columns}")
+            
+            # Extract only the rating columns
+            ratings = df[rating_columns]
             ratings.index = prompts
             
             # Convert numeric columns
