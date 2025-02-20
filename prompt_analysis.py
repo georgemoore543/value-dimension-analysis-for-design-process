@@ -41,11 +41,17 @@ def calculate_metrics(df, num_dimensions, max_rating):
 
 def get_plot_info():
     """Get plot title and framework information from user."""
+    # Define colorblind-friendly Okabe-Ito palette and hatch patterns
+    OKABE_ITO = ['#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2', '#D55E00', '#CC79A7', '#000000']
+    HATCH_PATTERNS = ['/', '\\', '|', '-', '+', 'x', 'o', 'O', '.']
+    
     # Get number of frameworks to compare
     while True:
         try:
             num_frameworks = int(input("How many frameworks would you like to compare? "))
             if num_frameworks > 0:
+                if num_frameworks > len(OKABE_ITO):
+                    print(f"Warning: Comparing more than {len(OKABE_ITO)} frameworks may reduce readability.")
                 break
             print("Please enter a positive number.")
         except ValueError:
@@ -65,7 +71,8 @@ def get_plot_info():
             'name': framework_name,
             'dimensions': num_dimensions,
             'max_rating': max_rating,
-            'color': ['blue', 'red', 'green', 'purple', 'orange', 'brown'][i]
+            'color': OKABE_ITO[i % len(OKABE_ITO)],
+            'hatch': HATCH_PATTERNS[i % len(HATCH_PATTERNS)]
         })
     
     return dataset_name, frameworks
@@ -82,23 +89,45 @@ def validate_prompts(dataframes):
             return False
     return True
 
+def get_point_size(num_points):
+    """
+    Determine appropriate point sizes based on number of data points.
+    Returns tuple of (regular_point_size, star_point_size)
+    """
+    if num_points < 10:
+        return 100, 200
+    elif num_points < 100:
+        return 80, 160
+    elif num_points < 1000:
+        return 50, 100
+    elif num_points < 10000:
+        return 30, 60
+    else:
+        return 15, 30
+
 def create_plot(results_list, dataset_name, frameworks):
     """Create and display the scatter plot for multiple frameworks."""
-    plt.figure(figsize=(15, 10))  # Increased figure size
+    plt.figure(figsize=(15, 10))
+    
+    # Get point sizes based on the number of data points
+    num_points = len(results_list[0])  # Use first framework as reference
+    point_size, star_size = get_point_size(num_points)
     
     # Plot data for each framework
     for results, framework in zip(results_list, frameworks):
-        # Plot regular points with smaller markers and increased transparency
-        plt.scatter(results['Rank'], results['Sum_Squares'],
-                   color=framework['color'], alpha=0.4, s=30,  # Reduced size and opacity
-                   label=f"{framework['dimensions']}-dimensional, {framework['name']} framework")
+        # Plot regular points
+        scatter = plt.scatter(results['Rank'], results['Sum_Squares'],
+                   color=framework['color'], alpha=0.4, s=point_size,
+                   label=f"{framework['dimensions']}-dimensional, {framework['name']} framework",
+                   hatch=framework['hatch'])
         
-        # Plot top 10 as stars with slightly smaller size
+        # Plot top 10 as stars
         top_10 = results[results['Rank'] <= 10]
-        plt.scatter(top_10['Rank'], top_10['Sum_Squares'],
-                   color=framework['color'], marker='*', s=150,  # Reduced star size
+        scatter_top = plt.scatter(top_10['Rank'], top_10['Sum_Squares'],
+                   color=framework['color'], marker='*', s=star_size,
+                   hatch=framework['hatch'],
                    zorder=2)
-    
+
     plt.xlabel('Rank')
     plt.ylabel('Normalized Sum of Squares')
     plt.ylim(0, 1)  # Set y-axis limits from 0 to 1
@@ -124,45 +153,52 @@ def create_agreement_plots(results_list, dataset_name, frameworks):
     """Create separate agreement plots using each framework as the ranking basis."""
     plots = []
     
-    # Create a plot for each framework as the ranking basis
+    # Get point sizes based on the number of data points
+    num_points = len(results_list[0])  # Use first framework as reference
+    point_size, star_size = get_point_size(num_points)
+    
     for base_idx, base_framework in enumerate(frameworks):
-        plt.figure(figsize=(15, 10))  # Increased figure size
+        plt.figure(figsize=(15, 10))
         base_results = results_list[base_idx]
         
         # Create mapping of prompts to their position in base framework
         prompt_order = base_results.set_index('Prompt')['Rank']
         
-        # Plot base framework in black with smaller markers
-        plt.scatter(base_results['Rank'], base_results['Sum_Squares'],
-                   color='black', alpha=0.4, s=30,  # Reduced size and opacity
-                   label=f"{base_framework['dimensions']}-dimensional, {base_framework['name']} framework")
+        # Plot base framework in black
+        scatter_base = plt.scatter(base_results['Rank'], base_results['Sum_Squares'],
+                   color='black', alpha=0.4, s=point_size,
+                   label=f"{base_framework['dimensions']}-dimensional, {base_framework['name']} framework",
+                   hatch=base_framework['hatch'])
         
-        # Plot top 10 for base framework with slightly smaller size
+        # Plot top 10 for base framework
         top_10_base = base_results[base_results['Rank'] <= 10]
-        plt.scatter(top_10_base['Rank'], top_10_base['Sum_Squares'],
-                   color='black', marker='*', s=150,  # Reduced star size
+        scatter_base_top = plt.scatter(top_10_base['Rank'], top_10_base['Sum_Squares'],
+                   color='black', marker='*', s=star_size,
+                   hatch=base_framework['hatch'],
                    zorder=2)
         
-        # Plot other frameworks with smaller markers
+        # Plot other frameworks
         for i, (results, framework) in enumerate(zip(results_list, frameworks)):
-            if i != base_idx:  # Skip base framework as it's already plotted
+            if i != base_idx:
                 # Reorder this framework's results according to base framework
                 ordered_results = results.set_index('Prompt')
                 ordered_results['BaseRank'] = ordered_results.index.map(prompt_order)
                 
                 # Plot regular points
-                plt.scatter(ordered_results['BaseRank'], ordered_results['Sum_Squares'],
-                          color=framework['color'], alpha=0.4, s=30,  # Reduced size and opacity
-                          label=f"{framework['dimensions']}-dimensional, {framework['name']} framework")
+                scatter = plt.scatter(ordered_results['BaseRank'], ordered_results['Sum_Squares'],
+                          color=framework['color'], alpha=0.4, s=point_size,
+                          label=f"{framework['dimensions']}-dimensional, {framework['name']} framework",
+                          hatch=framework['hatch'])
                 
                 # Plot top 10
                 top_10 = results[results['Rank'] <= 10]
                 top_10_ordered = top_10.set_index('Prompt')
                 top_10_ordered['BaseRank'] = top_10_ordered.index.map(prompt_order)
-                plt.scatter(top_10_ordered['BaseRank'], top_10_ordered['Sum_Squares'],
-                          color=framework['color'], marker='*', s=150,  # Reduced star size
+                scatter_top = plt.scatter(top_10_ordered['BaseRank'], top_10_ordered['Sum_Squares'],
+                          color=framework['color'], marker='*', s=star_size,
+                          hatch=framework['hatch'],
                           zorder=2)
-        
+
         plt.xlabel(f'Rank (based on {base_framework["name"]} framework)')
         plt.ylabel('Normalized Sum of Squares')
         plt.ylim(0, 1)  # Set y-axis limits from 0 to 1
