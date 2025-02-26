@@ -229,22 +229,25 @@ class LLMHandler:
     def _create_pca_prompt(self, component_data):
         prompt = f"""Please analyze Principal Component {component_data['pc_num']} and generate a meaningful name and explanation.
 
-Top contributing dimensions with their definitions:
-{component_data['top_dims']}
-
 High-scoring examples:
 {component_data['high_prompts']}
 
 Low-scoring examples:
 {component_data['low_prompts']}
 
+{component_data.get('additional_info', '')}
+
 Please generate:
-1. A concise but meaningful name (2-5 words) that captures the underlying concept represented by this component. Consider the definitions of the value dimensions, not just their names.
-2. A brief explanation (2-3 sentences) of why this name was chosen, referencing how the component relates to the underlying value dimensions and their definitions.
+1. A high theme (1-2 sentences) that captures the novel pattern in high-scoring examples
+2. A low theme (1-2 sentences) that captures the novel pattern in low-scoring examples
+3. A concise but meaningful name (2-5 words) that captures the contrast between these themes
+4. A brief explanation (2-3 sentences) of why this name was chosen, referencing the identified themes
 
 Format your response as:
 Name: [your suggested name]
-Explanation: [your explanation]"""
+Explanation: [your explanation]
+High Theme: [theme for high-scoring examples]
+Low Theme: [theme for low-scoring examples]"""
 
         # Debug output
         print("\n" + "="*50)

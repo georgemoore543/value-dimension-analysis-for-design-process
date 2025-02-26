@@ -32,12 +32,18 @@ def generate_pca_names(pca_results, prompts_df, n_components):
         results = []
         for i in range(n_components):
             print(f"\nDEBUG: PCA results received for PC{i+1}:")
-            print(f"top_dims: {pca_results.get(f'pc_{i+1}_top_dims', '')}")
+            print(f"High prompts: {pca_results.get(f'pc_{i+1}_high_prompts', '')}")
+            print(f"Low prompts: {pca_results.get(f'pc_{i+1}_low_prompts', '')}")
             pc_data = {
                 'pc_num': i + 1,
-                'top_dims': pca_results.get(f'pc_{i+1}_top_dims', ''),
                 'high_prompts': pca_results.get(f'pc_{i+1}_high_prompts', ''),
-                'low_prompts': pca_results.get(f'pc_{i+1}_low_prompts', '')
+                'low_prompts': pca_results.get(f'pc_{i+1}_low_prompts', ''),
+                'additional_info': (
+                    "Please identify novel and specific themes from the high and low prompts, "
+                    "rather than relying on the original value dimensions. Each PC may reveal "
+                    "different types of patterns, so don't feel constrained to similar themes "
+                    "across components. Include both a high theme and a low theme in your analysis."
+                )
             }
             
             result = llm_handler.generate_name(pc_data)

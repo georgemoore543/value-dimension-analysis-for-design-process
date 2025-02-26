@@ -1215,37 +1215,33 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
 
             # Generate names based on analysis type
             if analysis_type == "pca":
-                # Add these debug prints
-                print("\nDEBUG: Available dimension definitions:")
-                print(instance.dim_definitions if hasattr(instance, 'dim_definitions') else "No dim_definitions found")
-                
                 # Format PCA results as expected by generate_pca_names
                 results_dict = {}
                 for i, comp in enumerate(instance.pca.components_):
-                    sorted_indices = abs(comp).argsort()[::-1]
-                    top_dims = []
-                    for idx in sorted_indices[:5]:
-                        dim_name = instance.original_dims[idx]
-                        # Remove '_Rating' suffix to match the definition keys
-                        definition_key = dim_name.replace('_Rating', '')
-                        definition = instance.dim_definitions.get(definition_key, '')
-                        loading = comp[idx]
-                        dim_info = f"{dim_name} (loading: {loading:.3f})"
-                        if definition:
-                            dim_info += f"\nDefinition: {definition}"
-                        top_dims.append(dim_info)
+                    # Calculate PC scores for all prompts
+                    pc_scores = instance.pca_ratings[:, i]
                     
-                    results_dict[f'pc_{i+1}_top_dims'] = '\n'.join(top_dims)
-                    results_dict[f'pc_{i+1}_high_prompts'] = '\n'.join([
-                        f"{instance.original_dims[idx]} (loading: {comp[idx]:.3f})"
-                        for idx in sorted_indices[:5]
-                    ])
-                    results_dict[f'pc_{i+1}_low_prompts'] = '\n'.join([
-                        f"{instance.original_dims[idx]} (loading: {comp[idx]:.3f})"
-                        for idx in sorted_indices[-5:]
-                    ])
+                    # Get indices of top and bottom scoring prompts
+                    high_indices = pc_scores.argsort()[-5:][::-1]  # Top 5 highest scoring
+                    low_indices = pc_scores.argsort()[:5]  # Top 5 lowest scoring
+                    
+                    # Format high-scoring prompts with their scores
+                    high_prompts = [
+                        f"Prompt: {instance.prompts[idx]}\nScore: {pc_scores[idx]:.3f}"
+                        for idx in high_indices
+                    ]
+                    
+                    # Format low-scoring prompts with their scores
+                    low_prompts = [
+                        f"Prompt: {instance.prompts[idx]}\nScore: {pc_scores[idx]:.3f}"
+                        for idx in low_indices
+                    ]
+                    
+                    # Store formatted results
+                    results_dict[f'pc_{i+1}_high_prompts'] = '\n\n'.join(high_prompts)
+                    results_dict[f'pc_{i+1}_low_prompts'] = '\n\n'.join(low_prompts)
                 
-                prompts_df = pd.DataFrame({'prompt': instance.original_dims})
+                prompts_df = pd.DataFrame({'prompt': instance.prompts})
                 
                 from pca_naming import generate_pca_names
                 results = generate_pca_names(
