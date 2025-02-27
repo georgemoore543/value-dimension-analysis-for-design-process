@@ -555,7 +555,24 @@ class ValueDimensionICA:
             print("\nPerforming ICA analysis...")
             if data is None:
                 raise ValueError("No data provided for ICA analysis")
+            
+            # Convert to DataFrame if not already
+            if not isinstance(data, pd.DataFrame):
+                data = pd.DataFrame(data)
+            
+            # Check for constant columns
+            print("\nChecking for constant columns...")
+            constant_cols = [col for col in data.columns if data[col].nunique() == 1]
+            if constant_cols:
+                print("Warning: Found constant columns that may cause division by zero:")
+                for col in constant_cols:
+                    print(f"- '{col}' (value = {data[col].iloc[0]})")
+                print("\nRemoving constant columns before proceeding...")
+                data = data.drop(columns=constant_cols)
                 
+            if data.empty:
+                raise ValueError("No non-constant columns remain after filtering")
+            
             # Initialize FastICA
             self.ica = FastICA(
                 n_components=n_components,
