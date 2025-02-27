@@ -1213,31 +1213,35 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                     raise ValueError("ICA analysis has not been performed yet")
                 instance = self.ica_instance
 
-            # For ICA, let user select components to name
-            if analysis_type == "ica":
-                # Show component selection dialog
-                n_components = instance.mixing_matrix.shape[1]
-                selected_components = self.show_component_selection_dialog(n_components, "ica")
-                if not selected_components:  # If user cancels
-                    status_label.config(text="Ready")
-                    return
-            
             # Generate names based on analysis type
             if analysis_type == "pca":
                 # Format PCA results as expected by generate_pca_names
                 results_dict = {}
                 for i, comp in enumerate(instance.pca.components_):
-                    sorted_indices = abs(comp).argsort()[::-1]
-                    results_dict[f'pc_{i+1}_high_prompts'] = '\n'.join([
-                        f"{instance.original_dims[idx]} (loading: {comp[idx]:.3f})"
-                        for idx in sorted_indices[:5]
-                    ])
-                    results_dict[f'pc_{i+1}_low_prompts'] = '\n'.join([
-                        f"{instance.original_dims[idx]} (loading: {comp[idx]:.3f})"
-                        for idx in sorted_indices[-5:]
-                    ])
+                    # Calculate PC scores for all prompts
+                    pc_scores = instance.pca_ratings[:, i]
+                    
+                    # Get indices of top and bottom scoring prompts
+                    high_indices = pc_scores.argsort()[-5:][::-1]  # Top 5 highest scoring
+                    low_indices = pc_scores.argsort()[:5]  # Top 5 lowest scoring
+                    
+                    # Format high-scoring prompts with their scores
+                    high_prompts = [
+                        f"Prompt: {instance.prompts[idx]}\nScore: {pc_scores[idx]:.3f}"
+                        for idx in high_indices
+                    ]
+                    
+                    # Format low-scoring prompts with their scores
+                    low_prompts = [
+                        f"Prompt: {instance.prompts[idx]}\nScore: {pc_scores[idx]:.3f}"
+                        for idx in low_indices
+                    ]
+                    
+                    # Store formatted results
+                    results_dict[f'pc_{i+1}_high_prompts'] = '\n\n'.join(high_prompts)
+                    results_dict[f'pc_{i+1}_low_prompts'] = '\n\n'.join(low_prompts)
                 
-                prompts_df = pd.DataFrame({'prompt': instance.original_dims})
+                prompts_df = pd.DataFrame({'prompt': instance.prompts})
                 
                 from pca_naming import generate_pca_names
                 results = generate_pca_names(
@@ -1246,14 +1250,16 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                     n_components=min(8, len(instance.pca.components_))
                 )
             else:  # ICA
-                # Format ICA results for selected components only
+                # Copy dimension definitions from PCA instance to ICA instance
+                instance.dim_definitions = self.pca_instance.dim_definitions
+                
+                # Format ICA results
                 results_dict = {}
                 n_features = len(self.pca_instance.original_dims)
                 
-                for i in selected_components:
-                    comp_idx = i - 1  # Convert from 1-based to 0-based indexing
-                    coeffs = instance.mixing_matrix[:, comp_idx]
-                    kurt_score = instance.kurtosis_scores[comp_idx]
+                for i in range(instance.mixing_matrix.shape[1]):
+                    coeffs = instance.mixing_matrix[:, i]
+                    kurt_score = instance.kurtosis_scores[i]
                     
                     # Get indices for top dimensions (both positive and negative)
                     sorted_indices = abs(coeffs).argsort()[::-1]
@@ -1263,16 +1269,16 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                     high_indices = sorted_indices[:5]  # Top 5 positive loadings
                     low_indices = sorted_indices[-5:]  # Bottom 5 negative loadings
                     
-                    # Store formatted results
-                    results_dict[f'ic_{i}_high_prompts'] = '\n'.join([
-                        f"{self.pca_instance.original_dims[idx]} (loading: {coeffs[idx]:.3f})"
+                    # Store formatted results with prompts only
+                    results_dict[f'ic_{i+1}_high_prompts'] = '\n'.join([
+                        f"{self.pca_instance.prompts[idx]} (loading: {coeffs[idx]:.3f})"
                         for idx in high_indices if idx < n_features
                     ])
-                    results_dict[f'ic_{i}_low_prompts'] = '\n'.join([
-                        f"{self.pca_instance.original_dims[idx]} (loading: {coeffs[idx]:.3f})"
+                    results_dict[f'ic_{i+1}_low_prompts'] = '\n'.join([
+                        f"{self.pca_instance.prompts[idx]} (loading: {coeffs[idx]:.3f})"
                         for idx in low_indices if idx < n_features
                     ])
-                    results_dict[f'ic_{i}_kurtosis'] = kurt_score
+                    results_dict[f'ic_{i+1}_kurtosis'] = kurt_score
                 
                 prompts_df = pd.DataFrame({'prompt': self.pca_instance.original_dims})
                 
@@ -1280,7 +1286,7 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                 results = generate_ica_names(
                     ica_results=results_dict,
                     prompts_df=prompts_df,
-                    n_components=len(selected_components)  # Only generate names for selected components
+                    n_components=min(8, instance.mixing_matrix.shape[1])
                 )
 
             if results is not None:
