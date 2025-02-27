@@ -85,7 +85,6 @@ def generate_ica_names(ica_results, prompts_df, n_components):
         for i in range(n_components):
             ic_data = {
                 'ic_num': i + 1,
-                'top_dims': ica_results.get(f'ic_{i+1}_top_dims', ''),
                 'high_prompts': ica_results.get(f'ic_{i+1}_high_prompts', ''),
                 'low_prompts': ica_results.get(f'ic_{i+1}_low_prompts', ''),
                 'kurtosis': ica_results.get(f'ic_{i+1}_kurtosis', '')

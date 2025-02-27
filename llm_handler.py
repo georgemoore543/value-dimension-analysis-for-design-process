@@ -260,21 +260,45 @@ Low Theme: [theme for low-scoring examples]"""
 
     def _create_ica_prompt(self, ic_data):
         """Create prompt for ICA component naming"""
-        return f"""Please analyze this Independent Component and provide a concise name and explanation.
+        prompt = f"""Please analyze Independent Component {ic_data['ic_num']} and generate a meaningful name and explanation.
 
-Component number: {ic_data['ic_num']}
-Top contributing dimensions: {ic_data['top_dims']}
-High-loading prompts: {ic_data['high_prompts']}
-Low-loading prompts: {ic_data['low_prompts']}
+Distribution Information:
+This component has a kurtosis of {ic_data.get('kurtosis', 'N/A')}, indicating how the data points are distributed along this component. A high kurtosis suggests a more peaked distribution with heavier tails, while a low kurtosis suggests a more uniform distribution. Consider how this distribution pattern might relate to the content patterns in the prompts.
+
+High-loading prompts:
+{ic_data['high_prompts']}
+
+Low-loading prompts:
+{ic_data['low_prompts']}
+
 {ic_data.get('additional_info', '')}
 
-Please provide:
-1. A short, descriptive name (2-6 words) that captures the independent signal this component might represent
-2. A brief explanation of what this independent signal might represent, considering that ICA finds statistically independent sources
+Please analyze:
+1. How the distribution pattern (kurtosis) might indicate a unique signal or pattern in the data
+2. How this distribution relates to the content patterns in high and low-loading prompts
+3. What independent signal or phenomenon this component might be capturing
+
+Then generate:
+1. A high theme (1-2 sentences) that captures the novel pattern in high-loading examples
+2. A low theme (1-2 sentences) that captures the novel pattern in low-loading examples
+3. A concise but meaningful name (2-5 words) that captures both the thematic contrast and any unique distribution characteristics
+4. A brief explanation (2-3 sentences) connecting the identified themes with the component's distribution pattern
 
 Format your response as:
 Name: [your suggested name]
-Explanation: [your explanation]"""
+Distribution Analysis: [1-2 sentences about what the distribution pattern suggests]
+High Theme: [theme for high-loading examples]
+Low Theme: [theme for low-loading examples]
+Explanation: [your explanation connecting themes and distribution]"""
+
+        # Debug output
+        print("\n" + "="*50)
+        print(f"DEBUG: Prompt for IC{ic_data['ic_num']}:")
+        print("="*50)
+        print(prompt)
+        print("="*50 + "\n")
+
+        return prompt
 
     def prepare_pc_data(self, pca_instance, pc_index: int) -> Dict[str, Any]:
         """Prepare data about a PC for the LLM prompt"""
