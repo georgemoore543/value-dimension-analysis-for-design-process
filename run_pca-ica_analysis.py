@@ -1247,7 +1247,7 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                 results = generate_pca_names(
                     pca_results=results_dict,
                     prompts_df=prompts_df,
-                    n_components=min(8, len(instance.pca.components_))
+                    n_components=min(10, len(instance.pca.components_))  # Limit to 10 components for PCA
                 )
             else:  # ICA
                 # Copy dimension definitions from PCA instance to ICA instance
@@ -1280,13 +1280,13 @@ class ValueDimensionPCAGui(ValueDimensionPCA):
                     ])
                     results_dict[f'ic_{i+1}_kurtosis'] = kurt_score
                 
-                prompts_df = pd.DataFrame({'prompt': self.pca_instance.original_dims})
+                prompts_df = pd.DataFrame({'prompt': self.pca_instance.prompts})
                 
                 from pca_naming import generate_ica_names
                 results = generate_ica_names(
                     ica_results=results_dict,
                     prompts_df=prompts_df,
-                    n_components=min(8, instance.mixing_matrix.shape[1])
+                    n_components=instance.mixing_matrix.shape[1]  # No limit for ICA components
                 )
 
             if results is not None:

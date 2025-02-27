@@ -83,19 +83,33 @@ def generate_ica_names(ica_results, prompts_df, n_components):
         # 3. Generate names for components
         results = []
         for i in range(n_components):
+            # Check kurtosis value before processing
+            kurtosis = ica_results.get(f'ic_{i+1}_kurtosis', 0)
+            if kurtosis <= 3:
+                print(f"\nSkipping IC{i+1} due to low kurtosis value ({kurtosis:.3f})")
+                continue
+                
             ic_data = {
                 'ic_num': i + 1,
                 'high_prompts': ica_results.get(f'ic_{i+1}_high_prompts', ''),
                 'low_prompts': ica_results.get(f'ic_{i+1}_low_prompts', ''),
-                'kurtosis': ica_results.get(f'ic_{i+1}_kurtosis', '')
+                'kurtosis': kurtosis
             }
             
             # Add kurtosis information to the prompt
-            ic_data['additional_info'] = f"This is an Independent Component with kurtosis {ic_data['kurtosis']:.3f}. " \
-                                       f"High kurtosis suggests more non-Gaussian, potentially meaningful signals."
+            ic_data['additional_info'] = (
+                f"This is an Independent Component with kurtosis {kurtosis:.3f}, which is notably higher than "
+                f"a normal distribution (kurtosis = 3). This suggests this component captures a distinct "
+                f"non-Gaussian signal that might represent a meaningful pattern."
+            )
             
             result = llm_handler.generate_name(ic_data, component_type='ica')
-            results.append(result)
+            if result:  # Only append if we got a valid result
+                results.append(result)
+
+        if not results:
+            print("No ICs found with kurtosis > 3")
+            return None
 
         # Convert results to DataFrame
         df_results = pd.DataFrame(results)
