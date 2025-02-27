@@ -194,13 +194,13 @@ class LLMHandler:
                 prompt = self._create_ica_prompt(component_data)
 
             response = self.sync_client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4-turbo-preview",
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant that names statistical components."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7,
-                max_tokens=2000
+                max_tokens=4000
             )
 
             # Parse the response using parse_name_response instead of parse_response
